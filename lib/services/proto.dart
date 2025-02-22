@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/services/evenai_proto.dart';
-import 'package:demo_ai_even/utils/utils.dart';
+import 'package:agixt_even_realities/ble_manager.dart';
+import 'package:agixt_even_realities/services/evenai_proto.dart';
+import 'package:agixt_even_realities/utils/utils.dart';
 
 class Proto {
   static String lR() {

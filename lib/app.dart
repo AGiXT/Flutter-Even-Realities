@@ -1,6 +1,6 @@
 
 
-import 'package:demo_ai_even/services/evenai.dart';
+import 'package:agixt_even_realities/services/evenai.dart';
 
 class App {
   static App? _instance;

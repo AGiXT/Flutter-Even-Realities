@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math';
-import 'package:demo_ai_even/services/evenai.dart';
-import 'package:demo_ai_even/services/proto.dart';
+import 'package:agixt_even_realities/services/evenai.dart';
+import 'package:agixt_even_realities/services/proto.dart';
 
 class TextService {
   static TextService? _instance;

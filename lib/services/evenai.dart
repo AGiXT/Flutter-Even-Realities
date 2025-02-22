@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/controllers/evenai_model_controller.dart';
-import 'package:demo_ai_even/services/api_services_deepseek.dart';
-import 'package:demo_ai_even/services/proto.dart';
+import 'package:agixt_even_realities/ble_manager.dart';
+import 'package:agixt_even_realities/controllers/evenai_model_controller.dart';
+import 'package:agixt_even_realities/services/api_services_deepseek.dart';
+import 'package:agixt_even_realities/services/proto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';

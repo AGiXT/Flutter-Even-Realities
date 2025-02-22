@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'package:demo_ai_even/app.dart';
-import 'package:demo_ai_even/services/ble.dart';
-import 'package:demo_ai_even/services/evenai.dart';
-import 'package:demo_ai_even/services/proto.dart';
+import 'package:agixt_even_realities/app.dart';
+import 'package:agixt_even_realities/services/ble.dart';
+import 'package:agixt_even_realities/services/evenai.dart';
+import 'package:agixt_even_realities/services/proto.dart';
 import 'package:flutter/services.dart';
 
 typedef SendResultParse = bool Function(Uint8List value);

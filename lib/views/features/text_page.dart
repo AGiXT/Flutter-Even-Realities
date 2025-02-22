@@ -1,5 +1,5 @@
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/services/text_service.dart';
+import 'package:agixt_even_realities/ble_manager.dart';
+import 'package:agixt_even_realities/services/text_service.dart';
 import 'package:flutter/material.dart';
 
 class TextPage extends StatefulWidget {

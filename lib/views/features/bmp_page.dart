@@ -1,7 +1,7 @@
 // ignore_for_file: library_private_types_in_public_api
 
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/services/features_services.dart';
+import 'package:agixt_even_realities/ble_manager.dart';
+import 'package:agixt_even_realities/services/features_services.dart';
 import 'package:flutter/material.dart';
 
 class BmpPage extends StatefulWidget {

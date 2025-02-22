@@ -2,10 +2,11 @@
 
 import 'dart:async';
 
-import 'package:demo_ai_even/ble_manager.dart';
-import 'package:demo_ai_even/services/evenai.dart';
-import 'package:demo_ai_even/views/even_list_page.dart';
-import 'package:demo_ai_even/views/features_page.dart';
+import 'package:agixt_even_realities/ble_manager.dart';
+import 'package:agixt_even_realities/services/evenai.dart';
+import 'package:agixt_even_realities/views/even_list_page.dart';
+import 'package:agixt_even_realities/views/features_page.dart';
+import 'package:agixt_even_realities/views/extensions_page.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -107,6 +108,22 @@ class _HomePageState extends State<HomePage> {
                 child: Icon(Icons.menu),
               ),
             ),
+            InkWell(
+              onTap: () {
+                print("To Extensions Page...");
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ExtensionsPage()),
+                );
+              },
+              splashColor: Colors.transparent,
+              highlightColor: Colors.transparent,
+              child: const Padding(
+                padding:
+                    EdgeInsets.only(left: 16, top: 12, bottom: 14, right: 16),
+                child: Icon(Icons.extension),
+              ),
+            ),
           ],
         ),
         body: Padding(
@@ -125,8 +142,16 @@ class _HomePageState extends State<HomePage> {
                 child: Container(
                   height: 100,
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(5),
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.5),
+                        spreadRadius: 2,
+                        blurRadius: 5,
+                        offset: Offset(0, 3),
+                      ),
+                    ],
                   ),
                   alignment: Alignment.center,
                   child: Text(BleManager.get().getConnectionStatus(),
@@ -164,7 +189,7 @@ class _HomePageState extends State<HomePage> {
                                     width: 50,
                                     height: 50,
                                     child: CircularProgressIndicator(),
-                                  ) // Color(0xFFFEF991)
+                                  )
                                 : Text(
                                     snapshot.data ?? "Loading...",
                                     style: TextStyle(
