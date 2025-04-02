@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:agixt_even_realities/ble_manager.dart';
 import 'package:agixt_even_realities/controllers/evenai_model_controller.dart';
-import 'package:agixt_even_realities/services/api_services_deepseek.dart';
+import 'package:agixt_even_realities/services/api_services.dart'; // Use AGiXT service
 import 'package:agixt_even_realities/services/proto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -145,7 +145,8 @@ class EvenAI {
       return;
     }
 
-    final apiService = ApiDeepSeekService();
+    // Use the AGiXT ApiService via GetX
+    final ApiService apiService = Get.find<ApiService>();
     String answer = await apiService.sendChatRequest(combinedText);
   
     print("recordOverByOS----startSendReply---combinedText-------*$combinedText*-----answer----$answer----");
