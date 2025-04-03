@@ -15,10 +15,10 @@ class ServerConfigController extends GetxController {
   void onInit() {
     super.onInit();
     // Initialize SDK with default settings but don't mark as configured yet
-    _initializeSDK(baseUri.value, apiKey.value);
+    initializeSDK(baseUri.value, apiKey.value);
   }
 
-  void _initializeSDK(String uri, String? key) {
+  void initializeSDK(String uri, String? key) {
     // Try to get AuthController if it exists
     AuthController? authController;
     try {
@@ -65,7 +65,7 @@ class ServerConfigController extends GetxController {
       baseUri.value = cleanUri;
       apiKey.value = key ?? '';
 
-      _initializeSDK(cleanUri, key); // Re-initialize SDK with new config
+      initializeSDK(cleanUri, key); // Re-initialize SDK with new config
       checkServerConnection(); // Check connection after config
       return true;
     } catch (e) {
@@ -99,7 +99,7 @@ class ServerConfigController extends GetxController {
   // Call this when auth token changes
   void updateWithToken(String token) {
     if (token.isNotEmpty) {
-      _initializeSDK(baseUri.value, token);
+      initializeSDK(baseUri.value, token);
     }
   }
 }

@@ -9,13 +9,13 @@ class ApiService {
   ApiService() {
     // Initialize AGiXTSDK using values from ServerConfigController
     _agixtSdk = AGiXTSDK(
-      baseUri: _configController.serverUrl.value,
+      baseUri: _configController.baseUri.value,
       apiKey: _configController.apiKey.value.isNotEmpty ? _configController.apiKey.value : null,
       verbose: true, // Enable verbose logging for debugging
     );
 
     // Listen for config changes to re-initialize the SDK
-    _configController.serverUrl.listen((_) => _reinitializeSdk());
+    _configController.baseUri.listen((_) => _reinitializeSdk());
     _configController.apiKey.listen((_) => _reinitializeSdk());
   }
 
@@ -55,7 +55,7 @@ class ApiService {
   void _reinitializeSdk() {
     print("Reinitializing AGiXTSDK with new config...");
     _agixtSdk = AGiXTSDK(
-      baseUri: _configController.serverUrl.value,
+      baseUri: _configController.baseUri.value,
       apiKey: _configController.apiKey.value.isNotEmpty ? _configController.apiKey.value : null,
       verbose: true,
     );

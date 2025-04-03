@@ -1,16 +1,67 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:url_launcher/url_launcher.dart'; // Added
+import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Added
+import 'package:agixtsdk/agixtsdk.dart'; // Added
 import '../controllers/auth_controller.dart';
 import '../controllers/server_config_controller.dart';
 
 class LoginPage extends StatelessWidget {
   final AuthController authController = Get.find();
   final ServerConfigController serverConfig = Get.find();
+  // SDK instance - initialize in initState or similar if stateful, or here if stateless and config is ready
+  late final AGiXTSDK sdk; // Will initialize later
+
   final TextEditingController emailController = TextEditingController();
   final TextEditingController otpController = TextEditingController();
   final TextEditingController tokenController = TextEditingController();
   final RxBool isTokenLogin = false.obs;
+
+  // State for OAuth providers
+  final RxList<Map<String, dynamic>> oauthProviders = <Map<String, dynamic>>[].obs;
+  final RxBool isLoadingProviders = true.obs;
+  final RxString providerError = ''.obs;
+
+  LoginPage({super.key}) { // Added constructor for initialization
+    // Initialize SDK using server config
+    // Ensure serverConfig is initialized before accessing its values
+    // This might be better handled in an initState if it were a StatefulWidget
+    // or using GetX lifecycle methods if converting AuthController/ServerConfigController
+    _initializeSdkAndFetchProviders();
+  }
+
+  void _initializeSdkAndFetchProviders() {
+     // Use a listener or ensure config is ready before initializing
+     // For simplicity here, assuming config is available via Get.find()
+     sdk = AGiXTSDK(
+        baseUri: serverConfig.baseUri.value,
+        apiKey: authController.apiKey.value, // Assuming AuthController holds the key if logged in via token
+        verbose: true // Enable verbose logging for debugging
+     );
+     _fetchOAuthProviders();
+  }
+
+  Future<void> _fetchOAuthProviders() async {
+    isLoadingProviders.value = true;
+    providerError.value = '';
+    try {
+      // Ensure the server is configured before fetching
+      if (!serverConfig.isConfigured.value) {
+        providerError.value = 'Server not configured.';
+        isLoadingProviders.value = false;
+        return;
+      }
+      final providers = await sdk.getOAuthProviders();
+      // Filter providers that have a client_id, similar to the React example
+      oauthProviders.assignAll(providers.where((p) => p['client_id'] != null && p['client_id'].isNotEmpty).toList());
+    } catch (e) {
+      print("Error fetching OAuth providers: $e");
+      providerError.value = 'Failed to load OAuth providers.';
+    } finally {
+      isLoadingProviders.value = false;
+    }
+  }
 
   void _checkAndHandleTokenResponse(String response) {
     if (response.contains("?token=")) {
@@ -30,6 +81,84 @@ class LoginPage extends StatelessWidget {
     }
   }
 
+  // Helper to get FontAwesome icon
+  IconData _getIconForProvider(String name) {
+    switch (name.toLowerCase()) {
+      case 'discord':
+        return FontAwesomeIcons.discord;
+      case 'github':
+        return FontAwesomeIcons.github;
+      case 'google':
+        return FontAwesomeIcons.google;
+      case 'microsoft':
+        return FontAwesomeIcons.microsoft;
+      case 'x':
+        return FontAwesomeIcons.xTwitter; // Correct icon for X
+      case 'tesla':
+        return FontAwesomeIcons.car; // Placeholder, no direct Tesla icon
+      case 'amazon':
+        return FontAwesomeIcons.amazon;
+      case 'walmart':
+         return FontAwesomeIcons.store; // Placeholder
+      default:
+        return FontAwesomeIcons.signInAlt; // Generic login icon
+    }
+  }
+
+  // Function to launch OAuth URL
+  Future<void> _handleOAuthLogin(Map<String, dynamic> provider) async {
+    final String authorizeUrl = provider['authorize'];
+    final String clientId = provider['client_id'];
+    final String scopes = provider['scopes'];
+    final String providerName = provider['name'].toLowerCase();
+    // IMPORTANT: Redirect URI needs careful handling for mobile apps.
+    // --- Start Local Server and Prepare Redirect URI ---
+    final localServerPort = authController.getLocalServerPort(); // Use getter from AuthController
+    final String redirectUri = 'http://localhost:$localServerPort/oauth-callback';
+    print('Starting local server for redirect URI: $redirectUri');
+    // Start server and get the future that completes when callback is received
+    final Future<Uri?> callbackFuture = authController.startLocalServerAndAwaitCallback();
+    // --- End Local Server Setup ---
+
+    // Construct the full URL
+    // Note: Encoding parameters is crucial
+    final Uri url = Uri.parse(authorizeUrl).replace(queryParameters: {
+      'client_id': clientId,
+      'scope': scopes,
+      'response_type': 'code', // Standard for OAuth 2.0 Authorization Code flow
+      'redirect_uri': redirectUri,
+      if (providerName == 'google') 'access_type': 'offline', // Google specific
+      // Add other provider-specific params if needed
+    });
+
+    if (await canLaunchUrl(url)) {
+      await launchUrl(url, mode: LaunchMode.externalApplication); // Opens in external browser
+
+      // --- Await Callback ---
+      print('Waiting for OAuth callback...');
+      // Wait for the local server to receive the callback from the browser redirect
+      final Uri? callbackUri = await callbackFuture;
+
+      if (callbackUri != null) {
+        print('OAuth callback received by local server: $callbackUri');
+        // Pass the full callback URI to the controller for processing (code exchange, etc.)
+        await authController.handleOAuthCallback(callbackUri);
+      } else {
+        // This means the server timed out or failed to start
+        print('OAuth flow failed, timed out, or server error.');
+        // Error message should already be set in AuthController
+        // Get.snackbar('Error', 'Authentication failed or timed out.'); // Optionally show snackbar
+      }
+      // --- End Await Callback ---
+
+    } else {
+      print('Could not launch $url');
+      Get.snackbar('Error', 'Could not open authentication page.');
+      // Ensure server stops if we couldn't even launch the URL
+      await authController.stopLocalServer();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -40,7 +169,9 @@ class LoginPage extends StatelessWidget {
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(20.0),
-            child: Column(
+            // Corrected Structure: Padding -> SingleChildScrollView -> Column
+            child: SingleChildScrollView(
+              child: Column( // This Column now correctly inside SingleChildScrollView
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 // AGiXT Logo
@@ -65,6 +196,7 @@ class LoginPage extends StatelessWidget {
                 ),
 
                 // Login Method Toggle
+                // Consider if OAuth should bypass this toggle or be presented alongside
                 Padding(
                   padding: const EdgeInsets.only(bottom: 20.0),
                   child: Row(
@@ -132,6 +264,53 @@ class LoginPage extends StatelessWidget {
                 ),
                 
                 SizedBox(height: 30),
+
+                // --- OAuth Login Buttons ---
+                Obx(() {
+                  if (isLoadingProviders.value) {
+                    return const CircularProgressIndicator();
+                  }
+                  if (providerError.value.isNotEmpty) {
+                    return Text(providerError.value, style: const TextStyle(color: Colors.orange));
+                  }
+                  if (oauthProviders.isEmpty) {
+                    return const SizedBox.shrink(); // Or Text('No OAuth providers available.')
+                  }
+
+                  // Sort providers alphabetically by name
+                  final sortedProviders = List<Map<String, dynamic>>.from(oauthProviders);
+                  sortedProviders.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+
+                  return Column(
+                    children: [
+                       const Text("Or continue with:", style: TextStyle(color: Colors.grey)),
+                       const SizedBox(height: 15),
+                       Wrap( // Use Wrap for better layout if many providers
+                         spacing: 10.0, // Horizontal space between buttons
+                         runSpacing: 10.0, // Vertical space between rows
+                         alignment: WrapAlignment.center,
+                         children: sortedProviders.map((provider) {
+                           final name = provider['name'] as String;
+                           final capitalizedName = name[0].toUpperCase() + name.substring(1);
+                           return ElevatedButton.icon(
+                             icon: FaIcon(_getIconForProvider(name), size: 18),
+                             label: Text(name.toLowerCase() == 'x' ? 'Continue with X (Twitter)' : 'Continue with $capitalizedName'),
+                             onPressed: () => _handleOAuthLogin(provider),
+                             style: ElevatedButton.styleFrom(
+                               foregroundColor: Colors.white, backgroundColor: Colors.grey[800], // Text color
+                               shape: RoundedRectangleBorder(
+                                 borderRadius: BorderRadius.circular(8),
+                               ),
+                               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                             ),
+                           );
+                         }).toList(),
+                       ),
+                       const SizedBox(height: 30), // Space after OAuth buttons
+                    ],
+                  );
+                }),
+                // --- End OAuth Login Buttons ---
 
                 // Login button
                 Obx(() => authController.isLoading.value
@@ -203,7 +382,8 @@ class LoginPage extends StatelessWidget {
                   child: const Text('Change Server'),
                 ),
               ],
-            ),
+            ), // End Column
+          ), // End SingleChildScrollView
           ),
         ),
       ),
