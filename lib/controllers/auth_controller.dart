@@ -1,36 +1,35 @@
-import 'package:dio/dio.dart'; // For making HTTP requests
+import 'package:dio/dio.dart';
 import 'dart:io'; // For HttpServer
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as io;
 import 'package:shelf_router/shelf_router.dart'; // Keep this as is
 import 'package:shelf/shelf.dart' as shelf; // Add prefix for shelf Response
-import 'dart:async'; // Added for StreamSubscription
 import 'package:get/get.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:agixtsdk/agixtsdk.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'server_config_controller.dart';
-import 'package:app_links/app_links.dart'; // Replaced uni_links
-import 'package:flutter/services.dart'; // Added for PlatformException
-  // --- Google OAuth Credentials (Replace with your actual values!) ---
-  // IMPORTANT: Store these securely, not hardcoded in production.
-  // Removed Google Client ID - Backend will handle this.
-  // Removed Google Client Secret - Backend will handle this.
-
+import 'package:app_links/app_links.dart';
+import 'package:flutter/services.dart';
+import 'dart:async';
 
 class AuthController extends GetxController {
   final Rx<AGiXTSDK?> sdk = Rx<AGiXTSDK?>(null);
   final RxBool isLoggedIn = false.obs;
   final RxBool isLoading = false.obs;
   final RxString error = ''.obs;
-  final RxString otpUri = ''.obs;
   final RxString token = ''.obs;
-  final RxString apiKey = ''.obs; // Added to store API key separately if needed
-
+  final RxString apiKey = ''.obs;
+  final RxString otpUri = ''.obs; // Added missing field
+  final RxList<Map<String, dynamic>> oauthProviders = RxList<Map<String, dynamic>>([]);
+  final RxString pkceState = ''.obs;
+  final RxString pkceCodeChallenge = ''.obs;
+  final RxString _currentOAuthProvider = ''.obs;
   late final ServerConfigController _serverConfigController;
   SharedPreferences? _prefs;
   static const String _tokenKey = 'auth_token';
-  StreamSubscription? _uriLinkSubscription; // Added for uni_links
-  final _appLinks = AppLinks(); // Instance of AppLinks
+  final _appLinks = AppLinks();
+  StreamSubscription? _uriLinkSubscription;
   // --- Local HTTP Server for OAuth Callback ---
   HttpServer? _localServer;
   final int _localServerPort = 8989; // Or choose dynamically
@@ -43,134 +42,31 @@ class AuthController extends GetxController {
   void onInit() {
     super.onInit();
     _serverConfigController = Get.find<ServerConfigController>();
-    // Initialize empty SDK - will configure later if valid credentials exist
-    sdk.value = AGiXTSDK(baseUri: '', apiKey: '', verbose: false); // Empty credentials will be populated after login
-    _initializeController();
-    _initAppLinks(); // Initialize app_links listener
+    _initializeController().then((_) => fetchOAuthProviders());
+    sdk.value = AGiXTSDK(baseUri: '', apiKey: '', verbose: false);
+    _initAppLinks();
   }
 
   @override
   void onClose() {
-    _uriLinkSubscription?.cancel(); // Cancel listener on close
+    _uriLinkSubscription?.cancel();
     stopLocalServer(); // Ensure local server is stopped
     super.onClose();
   }
-
-  // --- OAuth Callback Handling ---
-  Future<void> handleOAuthCallback(Uri callbackUri) async {
-    print('Processing OAuth callback: $callbackUri');
-    isLoading.value = true;
-    error.value = '';
-
-    try {
-      // Extract the authorization code (common flow)
-      final String? code = callbackUri.queryParameters['code'];
-      // Or extract token directly if using Implicit Grant (less common, less secure)
-      final String? receivedToken = callbackUri.queryParameters['token'];
-      final String? errorParam = callbackUri.queryParameters['error'];
-
-      if (errorParam != null) {
-        error.value = 'OAuth Error: $errorParam';
-        print('OAuth provider returned an error: $errorParam');
-        isLoading.value = false;
-        return;
-      }
-
-      if (code != null) {
-        print('Received authorization code: $code');
-        // --- Google Token Exchange ---
-        final tokenEndpoint = 'https://oauth2.googleapis.com/token';
-        final redirectUri = 'http://localhost:$_localServerPort/oauth-callback';
-
-        // Prepare request data (mask secret for logging)
-        final requestData = {
-          'code': code,
-          'client_id': _googleClientId,
-          'client_secret': _googleClientSecret, // Will be sent, just masked for logging
-          'redirect_uri': redirectUri,
-          'grant_type': 'authorization_code',
-        };
-        final logData = Map.from(requestData); // Create copy for logging
-        logData['client_secret'] = '********'; // Mask secret in log data
-        print('Attempting token exchange with data: $logData');
-
-        try {
-          final dio = Dio();
-          final response = await dio.post(
-            tokenEndpoint,
-            data: requestData, // Use the original data with the real secret
-            options: Options(
-              headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            ),
-          );
-
-          if (response.statusCode == 200 && response.data != null) {
-            final accessToken = response.data['access_token'];
-            if (accessToken != null) {
-              print('Successfully exchanged code for access token.');
-              // TODO: Decide if you need to use the AGiXT loginWithToken
-              // or if you need a different way to associate the Google token
-              // with the AGiXT user session.
-              // For now, let's assume loginWithToken works with the Google access token
-              // This might require backend changes in AGiXT if it doesn't support
-              // arbitrary external tokens directly.
-              await loginWithToken(accessToken);
-              Get.offNamed('/home'); // Navigate on success
-            } else {
-              error.value = 'Failed to get access token from response.';
-              print('Token exchange response missing access_token: ${response.data}');
-            }
-          } else {
-            error.value = 'Token exchange failed: ${response.statusCode} ${response.statusMessage}';
-            print('Token exchange failed: ${response.statusCode} ${response.data}');
-          }
-        } catch (e) {
-          error.value = 'Error during token exchange. Check credentials and redirect URI.'; // More specific hint
-          print('Error during token exchange: $e'); // Log the full exception
-          if (e is DioException && e.response != null) {
-            // Log more details from DioException if available
-            print('DioException Response Status: ${e.response?.statusCode}');
-            print('DioException Response Data: ${e.response?.data}');
-            print('DioException Request Options: ${e.requestOptions.uri}'); // Log the request URI
-            // Avoid logging full request options data directly if it might contain sensitive info repeatedly
-          }
-        }
-        // --- End Google Token Exchange ---
-
-      } else if (receivedToken != null) {
-        print('Received token directly: $receivedToken');
-        // Handle direct token (Implicit Grant - less recommended)
-        await loginWithToken(receivedToken);
-        Get.offNamed('/home'); // Navigate on success
-      } else {
-        error.value = 'Callback received, but no code or token found.';
-        print('Callback URI did not contain code or token: $callbackUri');
-      }
-    } catch (e) {
-      print('Error processing OAuth callback: $e');
-      error.value = 'Error processing authentication callback: ${e.toString()}';
-    } finally {
-      isLoading.value = false;
-      // Server should be stopped automatically by the handler or timeout
-    }
-  }
-  // --- End OAuth Callback Handling ---
 
   Future<void> _initializeController() async {
     _prefs = await SharedPreferences.getInstance();
     await _restoreSavedToken();
   }
 
-
   Future<void> _restoreSavedToken() async {
     if (_prefs == null) return;
-    
     final savedToken = _prefs!.getString(_tokenKey);
     if (savedToken != null) {
       final fullToken = "Bearer $savedToken";
-      token.value = fullToken; // Keep original token format if needed elsewhere
-      apiKey.value = savedToken; // Store just the key part
-      _serverConfigController.updateWithToken(savedToken); // Update server config with key
+      token.value = fullToken;
+      apiKey.value = savedToken;
+      _serverConfigController.updateWithToken(savedToken);
       isLoggedIn.value = true;
     }
   }
@@ -180,57 +76,270 @@ class AuthController extends GetxController {
     await _prefs!.setString(_tokenKey, token);
   }
 
-  // --- UniLinks Initialization and Handling ---
-  // Renamed from _initUniLinks
   Future<void> _initAppLinks() async {
     try {
-      // Get the initial link the app was opened with
       final initialUri = await _appLinks.getInitialAppLink();
       _handleIncomingLink(initialUri);
-
-      // Listen for subsequent links
-      // Note: app_links stream provides non-nullable Uri
-      _uriLinkSubscription = _appLinks.uriLinkStream.listen((Uri uri) {
-        _handleIncomingLink(uri);
-      }, onError: (err) {
+      _uriLinkSubscription = _appLinks.uriLinkStream.listen(_handleIncomingLink, onError: (err) {
         print('app_links error: $err');
-        // Handle error appropriately
       });
     } on PlatformException {
       print('app_links failed to get initial uri (PlatformException).');
-      // Handle error appropriately
     } catch (e) {
       print('app_links failed to get initial uri: $e');
-      // Handle other potential errors
     }
   }
 
   void _handleIncomingLink(Uri? uri) {
-    if (uri != null) {
-      print('Received incoming link: $uri');
-      // Check if it's our expected OAuth callback
-      // Example: evenrealities://oauth-callback?token=YOUR_API_TOKEN
-      if (uri.scheme == 'evenrealities' && uri.host == 'oauth-callback') {
-        final receivedToken = uri.queryParameters['token'];
-        if (receivedToken != null && receivedToken.isNotEmpty) {
-          print('Extracted token from OAuth callback: $receivedToken');
-          loginWithToken(receivedToken); // Use existing token login flow
-          Get.offNamed('/home'); // Navigate to home after successful login
+    if (uri != null && uri.scheme == 'evenrealities' && uri.host == 'oauth-callback') {
+      final code = uri.queryParameters['code'];
+      final state = uri.queryParameters['state'];
+      final errorParam = uri.queryParameters['error'];
+      if (errorParam != null) {
+        print('OAuth provider returned an error in callback: $errorParam');
+        error.value = 'Authentication failed: $errorParam';
+        isLoading.value = false;
+        _currentOAuthProvider.value = '';
+      } else if (code != null && state != null) {
+        print('Extracted code and state from OAuth callback.');
+        if (_currentOAuthProvider.value.isNotEmpty) {
+          _exchangeCodeWithBackend(provider: _currentOAuthProvider.value, code: code, state: state);
         }
       }
     }
   }
-  // --- End UniLinks ---
 
-  String? _extractTokenFromResponse(String responseUrl) {
+  // --- OAuth Callback Handling ---
+  // Note: This might be redundant if app_links handles everything via _handleIncomingLink,
+  // but keeping it based on original structure and potential direct callback needs (e.g., from local server).
+  Future<void> handleOAuthCallback(Uri callbackUri) async {
+    print('Processing OAuth callback via direct handler: $callbackUri');
+    isLoading.value = true;
+    error.value = '';
+
     try {
-      final uri = Uri.parse(responseUrl);
-      return uri.queryParameters['token']?.trim();
+      final String? code = callbackUri.queryParameters['code'];
+      final String? state = callbackUri.queryParameters['state']; // Need state for PKCE
+      final String? errorParam = callbackUri.queryParameters['error'];
+
+      if (errorParam != null) {
+        error.value = 'OAuth Error: $errorParam';
+        print('OAuth provider returned an error: $errorParam');
+        isLoading.value = false;
+        _currentOAuthProvider.value = ''; // Clear provider state
+        return;
+      }
+
+      if (code != null && state != null) {
+        print('Received authorization code and state via direct handler: $code');
+        // Call the backend exchange method if provider context is available
+        // This assumes the flow was initiated and _currentOAuthProvider was set.
+        if (_currentOAuthProvider.value.isNotEmpty) {
+           _exchangeCodeWithBackend(
+             provider: _currentOAuthProvider.value,
+             code: code,
+             state: state,
+           );
+        } else {
+           // This case might happen if the callback is triggered without prior context,
+           // e.g., manually opening the callback URL.
+           print('Error: OAuth callback received but no provider context was stored.');
+           error.value = 'Authentication session error. Please try initiating the flow again.';
+           isLoading.value = false;
+        }
+      } else {
+        error.value = 'Callback received, but no code or state found.';
+        print('Callback URI did not contain code or state: $callbackUri');
+        isLoading.value = false;
+        _currentOAuthProvider.value = ''; // Clear provider state
+      }
     } catch (e) {
-      return null;
+      print('Error processing OAuth callback: $e');
+      error.value = 'Error processing authentication callback: ${e.toString()}';
+      isLoading.value = false; // Ensure loading stops on error
+      _currentOAuthProvider.value = ''; // Clear provider state
+    }
+    // isLoading state is managed within _exchangeCodeWithBackend or the error paths above.
+  }
+  // --- End OAuth Callback Handling ---
+
+
+  Future<void> fetchOAuthProviders() async {
+    if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
+      print('SDK not ready or server URI not set, cannot fetch OAuth providers.');
+      return;
+    }
+    isLoading.value = true;
+    error.value = '';
+    try {
+      final dio = Dio(BaseOptions(baseUrl: _serverConfigController.baseUri.value));
+      final response = await dio.get('/v1/oauth');
+      if (response.statusCode == 200 && response.data != null && response.data['providers'] is List) {
+        final List<dynamic> providersData = response.data['providers'];
+        oauthProviders.assignAll(providersData.map((p) => Map<String, dynamic>.from(p)).toList());
+        print('Fetched OAuth providers: ${oauthProviders.length}');
+      } else {
+        error.value = 'Failed to fetch OAuth providers: ${response.statusCode}';
+        print('Error fetching OAuth providers: ${response.statusCode} ${response.data}');
+      }
+    } catch (e) {
+      print('Error fetching OAuth providers: $e');
+      error.value = 'Failed to fetch OAuth providers. Check server connection.';
+    } finally {
+      isLoading.value = false;
     }
   }
 
+  Future<void> initiateOAuthFlow(String providerName) async {
+    if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
+      error.value = 'Server configuration not set.';
+      print('Cannot initiate OAuth flow: Server config missing.');
+      return;
+    }
+    if (oauthProviders.isEmpty) {
+      await fetchOAuthProviders();
+      if (oauthProviders.isEmpty) {
+        error.value = 'OAuth providers not loaded. Cannot start flow.';
+        print('Cannot initiate OAuth flow: Providers not loaded.');
+        return;
+      }
+    }
+
+    final provider = oauthProviders.firstWhereOrNull((p) => p['name']?.toLowerCase() == providerName.toLowerCase());
+    if (provider == null) {
+      error.value = 'OAuth provider "$providerName" not found or not configured on the server.';
+      print('Provider $providerName not found in fetched list.');
+      return;
+    }
+
+    _currentOAuthProvider.value = providerName.toLowerCase();
+    isLoading.value = true;
+    error.value = '';
+    pkceState.value = '';
+    pkceCodeChallenge.value = '';
+
+    try {
+      final dio = Dio(BaseOptions(baseUrl: _serverConfigController.baseUri.value));
+      final pkceResponse = await dio.get('/v1/oauth2/pkce-simple');
+      if (pkceResponse.statusCode == 200 && pkceResponse.data != null) {
+        pkceCodeChallenge.value = pkceResponse.data['code_challenge'];
+        pkceState.value = pkceResponse.data['state'];
+        print('Received PKCE challenge and state from backend.');
+      } else {
+        throw Exception('Failed to get PKCE parameters from backend: ${pkceResponse.statusCode}');
+      }
+
+      final String authUrl = provider['auth_url'];
+      final String clientId = provider['client_id'];
+      final String scopes = provider['scopes'];
+      final String redirectUri = 'evenrealities://oauth-callback';
+
+      final authorizationUri = Uri.parse(authUrl).replace(queryParameters: {
+        'client_id': clientId,
+        'response_type': 'code',
+        'scope': scopes,
+        'redirect_uri': redirectUri,
+        'state': pkceState.value,
+        'code_challenge': pkceCodeChallenge.value,
+        'code_challenge_method': 'S256',
+      });
+
+      print('Constructed Auth URL: $authorizationUri');
+
+      if (await canLaunchUrl(authorizationUri)) {
+        print('Launching OAuth URL...');
+        await launchUrl(authorizationUri, mode: LaunchMode.externalApplication);
+      } else {
+        throw Exception('Could not launch OAuth URL: $authorizationUri');
+      }
+    } catch (e) {
+      print('Error initiating OAuth flow for $providerName: $e');
+      error.value = 'Failed to start authentication with $providerName.';
+      if (e is DioException) {
+        print('DioException: ${e.message}, Response: ${e.response?.data}');
+      }
+      _currentOAuthProvider.value = '';
+    }
+    // Note: isLoading remains true until callback is handled
+  }
+
+  Future<void> _exchangeCodeWithBackend({
+    required String provider,
+    required String code,
+    required String state,
+  }) async {
+    if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
+      error.value = 'Server configuration not set.';
+      print('Cannot exchange code: Server config missing.');
+      isLoading.value = false;
+      return;
+    }
+
+    if (state != pkceState.value) {
+      error.value = 'OAuth state mismatch. Potential security issue.';
+      print('Error: OAuth state mismatch. Expected ${pkceState.value}, received $state');
+      isLoading.value = false;
+      _currentOAuthProvider.value = '';
+      return;
+    }
+
+    print('Exchanging code with backend for provider: $provider');
+    try {
+      final dio = Dio(BaseOptions(baseUrl: _serverConfigController.baseUri.value));
+      final response = await dio.post('/v1/oauth2/$provider', data: {
+        'code': code,
+        'state': state,
+      });
+
+      if (response.statusCode == 200 && response.data != null) {
+        final String? backendToken = response.data['token'];
+        if (backendToken != null && backendToken.isNotEmpty) {
+          print('Successfully exchanged code for AGiXT token via backend.');
+          await loginWithToken(backendToken);
+          Get.offNamed('/home');
+        } else {
+          error.value = response.data['detail'] ?? 'Backend did not return a valid token.';
+          print('Backend response missing token: ${response.data}');
+        }
+      } else {
+        error.value = 'Backend code exchange failed: ${response.statusCode} ${response.data?['detail'] ?? response.statusMessage}';
+        print('Backend code exchange failed: ${response.statusCode} ${response.data}');
+      }
+    } catch (e) {
+      print('Error exchanging code with backend: $e');
+      error.value = 'Failed to complete authentication with backend.';
+      if (e is DioException) {
+        print('DioException: ${e.message}, Response: ${e.response?.data}');
+      }
+    } finally {
+      isLoading.value = false;
+      pkceState.value = '';
+      pkceCodeChallenge.value = '';
+      _currentOAuthProvider.value = '';
+    }
+  }
+
+  Future<bool> loginWithToken(String tokenValue) async {
+    try {
+      if (sdk.value == null) return false;
+      isLoading.value = true;
+      error.value = '';
+      final fullToken = "Bearer $tokenValue";
+      token.value = fullToken;
+      apiKey.value = tokenValue;
+      await _saveToken(tokenValue);
+      _serverConfigController.updateWithToken(tokenValue);
+      isLoggedIn.value = true;
+      return true;
+    } catch (e) {
+      error.value = e.toString();
+      return false;
+    } finally {
+      isLoading.value = false;
+    }
+  }
+
+  // Added missing login method
   Future<bool> login(String email, String otp) async {
     try {
       // Validate inputs first
@@ -244,13 +353,19 @@ class AuthController extends GetxController {
       }
 
       if (sdk.value == null) {
-        error.value = 'SDK not initialized';
-        return false;
+        // Attempt to re-initialize SDK if null (e.g., after logout/restart)
+        _serverConfigController.initializeSDK(
+          _serverConfigController.baseUri.value,
+          _serverConfigController.apiKey.value.isNotEmpty ? _serverConfigController.apiKey.value : null
+        );
+        if (sdk.value == null) {
+           error.value = 'SDK not initialized. Check server settings.';
+           return false;
+        }
       }
-      
+
       isLoading.value = true;
       error.value = '';
-      update(); // Proper GetX update method
 
       final response = await sdk.value!.login(email, otp)
           .timeout(const Duration(seconds: 30));
@@ -262,88 +377,90 @@ class AuthController extends GetxController {
 
       // Response should be like: "Log in at ?token=xyz"
       if (response.contains("?token=")) {
-        final token = response.split("token=")[1];
+        final tokenValue = response.split("token=")[1];
         // Use the same token login flow as API key login
-        return await loginWithToken(token);
+        return await loginWithToken(tokenValue);
       }
 
-      error.value = 'Invalid login response';
-      isLoggedIn.value = true;
-      return true;
+      error.value = 'Invalid login response format from server.';
+      return false; // Indicate failure if token not found in response
     } catch (e) {
-      error.value = e.toString();
+      print('Login error: $e');
+      error.value = 'Login failed: ${e.toString()}';
+       if (e is DioException) {
+         print('DioException details: ${e.message}, Response: ${e.response?.data}');
+         error.value = 'Login failed: Network or server error. Check connection and server status.';
+       }
       return false;
     } finally {
       isLoading.value = false;
     }
   }
 
-  Future<bool> loginWithToken(String tokenValue) async {
-    try {
-      if (sdk.value == null) return false;
-      
-      isLoading.value = true;
-      error.value = '';
-
-      final fullToken = "Bearer $tokenValue";
-      token.value = fullToken; // Keep original token format if needed elsewhere
-      apiKey.value = tokenValue; // Store just the key part
-      await _saveToken(tokenValue); // Save just the key part
-      _serverConfigController.updateWithToken(tokenValue);
-      isLoggedIn.value = true;
-      return true;
-    } catch (e) {
-      error.value = e.toString();
-      return false;
-    } finally {
-      isLoading.value = false;
-    }
-  }
-
+  // Added missing registerUser method
   Future<bool> registerUser(String email, String firstName, String lastName) async {
     try {
-      if (sdk.value == null) return false;
-      
+       if (sdk.value == null) {
+        // Attempt to re-initialize SDK if null
+        _serverConfigController.initializeSDK(
+          _serverConfigController.baseUri.value,
+          _serverConfigController.apiKey.value.isNotEmpty ? _serverConfigController.apiKey.value : null
+        );
+        if (sdk.value == null) {
+           error.value = 'SDK not initialized. Check server settings.';
+           return false;
+        }
+      }
+
       isLoading.value = true;
       error.value = '';
-      otpUri.value = '';
-      
+      otpUri.value = ''; // Ensure otpUri is cleared before registration attempt
+
       final result = await sdk.value!.registerUser(email, firstName, lastName);
+
       if (result != null) {
         if (result.toString().startsWith('otpauth://')) {
-          otpUri.value = result;
-          return true;
+          otpUri.value = result; // Store the OTP URI for display
+          print('Registration successful, OTP URI received.');
+          return true; // Indicate success, UI should show OTP QR code
         } else {
-          error.value = result;
+          // Handle cases where the backend returns an error message instead of OTP URI
+          error.value = result.toString();
+          print('Registration failed: Server returned message: $result');
         }
       } else {
-        error.value = 'Registration failed';
+        // Handle null response from SDK call
+        error.value = 'Registration failed: No response from server.';
+        print('Registration failed: Null response from SDK.');
       }
-      return false;
+      return false; // Indicate failure
     } catch (e) {
-      error.value = e.toString();
+      print('Registration error: $e');
+      error.value = 'Registration failed: ${e.toString()}';
+       if (e is DioException) {
+         print('DioException details: ${e.message}, Response: ${e.response?.data}');
+         error.value = 'Registration failed: Network or server error.';
+       }
       return false;
     } finally {
       isLoading.value = false;
     }
   }
 
+  // Added missing clearOtpUri method
   void clearOtpUri() {
     otpUri.value = '';
   }
 
   Future<void> logout() async {
     isLoggedIn.value = false;
-    otpUri.value = '';
     token.value = '';
     apiKey.value = '';
-    if (_prefs != null) {
-      await _prefs!.remove(_tokenKey);
-    }
-    // Re-initialize SDK without the token
+    otpUri.value = ''; // Also clear otpUri on logout
+    if (_prefs != null) await _prefs!.remove(_tokenKey);
     _serverConfigController.initializeSDK(_serverConfigController.baseUri.value, null);
+    await fetchOAuthProviders();
   }
-
 
   // --- Local HTTP Server Methods ---
 
