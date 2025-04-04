@@ -82,6 +82,80 @@ class AuthController extends GetxController {
     await _prefs!.setString(_tokenKey, token);
   }
 
+  String getPkceChallenge() => pkceCodeChallenge.value;
+  String getPkceState() => pkceState.value;
+
+  Future<void> fetchPkceParametersForProvider() async {
+    await _fetchPkceParameters();
+  }
+
+  // Helper methods for provider detection
+  String? _determineProvider(Uri callbackUri) {
+    print('\nDetermining provider for callback URL:');
+    print('URL: ${callbackUri.toString()}');
+    
+    final String? state = callbackUri.queryParameters['state'];
+    final String scope = callbackUri.queryParameters['scope']?.toLowerCase() ?? '';
+    
+    // Try all available methods to determine the provider
+    String? provider;
+    
+    // Check current provider in memory first
+    if (_currentOAuthProvider.value.isNotEmpty) {
+      provider = _currentOAuthProvider.value;
+    }
+    
+    // Check state map if we have a state parameter
+    if (provider == null && state != null && _stateToProvider.containsKey(state)) {
+      provider = _stateToProvider[state];
+    }
+    
+    // Check backup locations in state map
+    if (provider == null) {
+      provider = _stateToProvider['current'] ?? 
+                _stateToProvider['last_provider'] ?? 
+                _stateToProvider['active_provider'];
+    }
+    
+    // Try to detect from URL patterns
+    if (provider == null) {
+      if (callbackUri.toString().contains('accounts.google.com') ||
+          scope.contains('google') ||
+          (scope.contains('openid') && scope.contains('profile') && scope.contains('email'))) {
+        provider = 'google';
+      }
+      // Add detection for other providers here if needed
+    }
+    
+    print('Provider determination results:');
+    print('- From memory: ${_currentOAuthProvider.value}');
+    print('- From state parameter: ${state != null ? _stateToProvider[state] : 'No state'}');
+    print('- From URL pattern: ${_isGoogleOAuth(callbackUri) ? 'google' : 'not google'}');
+    print('- Final determination: $provider');
+    
+    return provider?.toLowerCase();
+  }
+  
+  // Improved helper method to detect Google OAuth
+  bool _isGoogleOAuth(Uri callbackUri) {
+    if (_currentOAuthProvider.value == 'google' || 
+        _stateToProvider['current'] == 'google' ||
+        _stateToProvider['provider_type'] == 'google') {
+      return true;
+    }
+    
+    final scope = callbackUri.queryParameters['scope']?.toLowerCase() ?? '';
+    final uri = callbackUri.toString().toLowerCase();
+    
+    // Check multiple patterns that indicate Google OAuth
+    return uri.contains('accounts.google.com') ||
+           uri.contains('google') ||
+           scope.contains('google') ||
+           (scope.contains('openid') && scope.contains('profile') && scope.contains('email')) ||
+           _currentOAuthProvider.value == 'google' ||
+           _stateToProvider['current'] == 'google';
+  }
+
   // --- Enhanced OAuth State Persistence ---
   Future<void> _saveStateMap() async {
     if (_prefs == null) return;
@@ -126,6 +200,91 @@ class AuthController extends GetxController {
       _stateToProvider.clear();
     }
   }
+  
+  Future<void> storeOAuthProvider(String providerName) async {
+    final normalized = providerName.toLowerCase();
+    print('\nStoring OAuth provider: $normalized');
+    
+    // Only perform cleanup if we're actually changing providers
+    if (_currentOAuthProvider.value != normalized) {
+      print('Switching to new provider:');
+      print('- Previous: ${_currentOAuthProvider.value}');
+      print('- New: $normalized');
+      if (_currentOAuthProvider.value.isNotEmpty) {
+        _stateToProvider.clear();
+        await _clearCurrentProvider();
+      }
+    } else {
+      print('Maintaining state for existing provider: $normalized');
+    }
+    
+    // Update provider type for better detection
+    _stateToProvider['provider_type'] = normalized;
+    
+    // Update in-memory value
+    _currentOAuthProvider.value = normalized;
+    
+    // Store in SharedPreferences
+    await _saveCurrentProvider(normalized);
+    
+    // Store in state map with multiple backups
+    _stateToProvider['current'] = normalized;
+    _stateToProvider['last_provider'] = normalized;
+    _stateToProvider['active_provider'] = normalized;
+    _stateToProvider['provider_backup'] = normalized;
+    await _saveStateMap();
+    
+    print('Provider information stored:');
+    print('- Memory: ${_currentOAuthProvider.value}');
+    print('- State Map: $_stateToProvider');
+    
+    // Verify and ensure storage persistence
+    final verifyProvider = await _prefs?.getString(_currentOAuthProviderKey);
+    if (verifyProvider != normalized) {
+      print('Warning: Provider storage verification failed, retrying...');
+      await _saveCurrentProvider(normalized);
+      // Wait for storage to sync
+      await Future.delayed(const Duration(milliseconds: 100));
+      final recheck = await _prefs?.getString(_currentOAuthProviderKey);
+      if (recheck != normalized) {
+        print('Error: Failed to persist provider information');
+        error.value = 'Failed to initialize OAuth provider';
+        return;
+      }
+    }
+    
+    print('Provider stored in all locations: $normalized');
+    
+    print('Stored provider in memory and persistent storage: $normalized');
+    
+    print('Stored and cleared previous state for OAuth provider: $normalized');
+    
+    // Pre-fetch PKCE parameters if needed
+    final provider = oauthProviders.firstWhereOrNull((p) => 
+        p['name']?.toLowerCase() == normalized);
+    if (provider != null && (provider['pkce_required'] ?? false)) {
+      await fetchPkceParametersForProvider();
+    }
+  }
+  
+  Future<void> addStateToProvider(String state, String providerName) async {
+    final normalized = providerName.toLowerCase();
+    
+    // Store state mapping
+    _stateToProvider[state] = normalized;
+    _stateToProvider['last_state'] = state;
+    _stateToProvider['current_state'] = state;
+    _stateToProvider['provider_type'] = normalized; // Ensure provider type is set
+    await _saveStateMap();
+    
+    // Ensure provider information is maintained
+    if (_currentOAuthProvider.value != normalized) {
+      await storeOAuthProvider(normalized);
+    }
+    
+    print('Added state-to-provider mapping: $state -> $normalized');
+    print('Current state map: $_stateToProvider');
+  }
 
   Future<void> _clearStateEntry(String state) async {
     _stateToProvider.remove(state);
@@ -142,6 +301,88 @@ class AuthController extends GetxController {
     }
   }
   
+  Future<void> _cleanupOAuthState(String? state) async {
+    if (state != null) {
+      await _clearStateEntry(state);
+    }
+    // Only clear current provider if it's not Google OAuth
+    if (_currentOAuthProvider.value != 'google') {
+      await _clearCurrentProvider();
+    }
+  }
+  
+  Future<void> _processOAuthCallback(Uri callbackUri, {required bool isGoogleProvider}) async {
+    isLoading.value = true;
+    error.value = '';
+    
+    try {
+      final String? code = callbackUri.queryParameters['code'];
+      final String? state = callbackUri.queryParameters['state'];
+      final String? errorParam = callbackUri.queryParameters['error'];
+      final String? scope = callbackUri.queryParameters['scope'];
+      
+      print('Processing callback with full details:');
+      print('- Code: $code');
+      print('- State: $state');
+      print('- Error: $errorParam');
+      print('- Scope: $scope');
+      print('- Is Google: $isGoogleProvider');
+      print('- Current Provider: ${_currentOAuthProvider.value}');
+      print('- State Map: $_stateToProvider');
+      print('- SharedPrefs Provider: ${_prefs?.getString(_currentOAuthProviderKey)}');
+      
+      if (errorParam != null) {
+        error.value = 'OAuth Error: $errorParam';
+        print('OAuth provider returned an error: $errorParam');
+        isLoading.value = false;
+        await _cleanupOAuthState(state);
+        return;
+      }
+      
+      if (code == null) {
+        error.value = 'Authentication Error: Code parameter missing in callback.';
+        print('Callback URI missing code: $callbackUri');
+        isLoading.value = false;
+        await _cleanupOAuthState(state);
+        return;
+      }
+      
+      String? provider;
+      if (isGoogleProvider) {
+        provider = 'google';
+      } else if (_currentOAuthProvider.value.isNotEmpty) {
+        provider = _currentOAuthProvider.value;
+      } else if (_stateToProvider['current'] != null) {
+        provider = _stateToProvider['current'];
+      } else if (_stateToProvider['last_provider'] != null) {
+        provider = _stateToProvider['last_provider'];
+      }
+      
+      if (provider == null || provider.isEmpty) {
+        error.value = 'Authentication Error: Unable to determine OAuth provider.';
+        isLoading.value = false;
+        return;
+      }
+      
+      print('Processing OAuth callback for provider: $provider');
+      
+      await _exchangeCodeWithBackend(
+        provider: provider,
+        code: code,
+        state: state ?? '',
+      );
+      
+    } catch (e) {
+      print('Error in OAuth callback: $e');
+      error.value = 'Error processing authentication callback: ${e.toString()}';
+      isLoading.value = false;
+    } finally {
+      if (!isGoogleProvider) {
+        await _cleanupOAuthState(null);
+      }
+    }
+  }
+
   Future<void> _clearCurrentProvider() async {
     if (_prefs == null) return;
     try {
@@ -176,87 +417,82 @@ class AuthController extends GetxController {
 
   // --- Improved OAuth Callback Handling ---
   Future<void> handleOAuthCallback(Uri callbackUri) async {
-    print('Processing OAuth callback via direct handler: $callbackUri');
-    await _loadStateMap(); // Ensure state map is loaded fresh
-    print('Current state map: $_stateToProvider');
-    isLoading.value = true;
-    error.value = '';
+    print('\n=== Processing OAuth Callback ===');
+    print('URL: ${callbackUri.toString()}');
+    print('Current Provider: ${_currentOAuthProvider.value}');
+    print('Provider Type: ${_stateToProvider['provider_type']}');
+    print('State Map: $_stateToProvider');
     
-    try {
-      final String? code = callbackUri.queryParameters['code'];
+    // Ensure we load the latest state
+    await _loadStateMap();
+    print('Current OAuth state before processing:');
+    print('- Provider in memory: ${_currentOAuthProvider.value}');
+    print('- Provider in state map: ${_stateToProvider['current']}');
+    print('- Provider type: ${_stateToProvider['provider_type']}');
+    
+    // Load stored provider state
+    String? provider = _currentOAuthProvider.value;
+    if (provider.isEmpty) {
+      // First check state parameter mapping
       final String? state = callbackUri.queryParameters['state'];
-      final String? errorParam = callbackUri.queryParameters['error'];
-      
-      print('Extracted state from callback URI: "$state"');
-      
-      if (errorParam != null) {
-        error.value = 'OAuth Error: $errorParam';
-        print('OAuth provider returned an error: $errorParam');
-        isLoading.value = false;
-        if (state != null) await _clearStateEntry(state);
-        await _clearCurrentProvider();
-        return;
-      }
-
-      if (code == null) {
-        error.value = 'Authentication Error: Code parameter missing in callback.';
-        print('Callback URI missing code: $callbackUri');
-        isLoading.value = false;
-        if (state != null) await _clearStateEntry(state);
-        await _clearCurrentProvider();
-        return;
-      }
-
-      // Get provider from current stored value if state is missing
-      String? providerName;
       if (state != null && _stateToProvider.containsKey(state)) {
-        providerName = _stateToProvider[state]!;
-        print('Using provider from state map: $providerName');
-      } else if (_currentOAuthProvider.value.isNotEmpty) {
-        providerName = _currentOAuthProvider.value;
-        print('State missing or invalid. Using current provider: $providerName');
-      } else if (_prefs != null) {
-        final storedProvider = _prefs!.getString(_currentOAuthProviderKey);
-        if (storedProvider != null && storedProvider.isNotEmpty) {
-          providerName = storedProvider;
-          print('Using provider from SharedPreferences: $providerName');
-        }
+        provider = _stateToProvider[state];
+      } else {
+        // Then check stored provider information
+        provider = _stateToProvider['provider_type'] ?? 
+                  _stateToProvider['current'] ?? 
+                  _stateToProvider['last_provider'];
       }
-
-      if (providerName == null || providerName.isEmpty) {
-        error.value = 'Authentication Error: Unable to determine OAuth provider.';
-        print('Error: Could not determine OAuth provider for callback: $callbackUri');
-        isLoading.value = false;
-        return;
-      }
-
-      _currentOAuthProvider.value = providerName;
-      print('Proceeding with provider: $providerName');
-      
-      final provider = oauthProviders.firstWhereOrNull((p) =>
-          p['name']?.toLowerCase() == providerName?.toLowerCase());
-      
-      final bool pkceRequired = provider?['pkce_required'] ?? false;
-      
-      // Exchange code with the backend
-      await _exchangeCodeWithBackend(
-        provider: providerName,
-        code: code,
-        state: pkceRequired ? (state ?? '') : '',
-      );
-
-      if (state != null) await _clearStateEntry(state);
-      await _clearCurrentProvider();
-
-    } catch (e) {
-      print('Error processing OAuth callback: $e');
-      error.value = 'Error processing authentication callback: ${e.toString()}';
-      isLoading.value = false;
-      if (callbackUri.queryParameters['state'] != null) {
-        await _clearStateEntry(callbackUri.queryParameters['state']!);
-      }
-      await _clearCurrentProvider();
     }
+    
+    // Detect Google OAuth if provider still unknown
+    if ((provider?.isEmpty ?? true) && _isGoogleOAuth(callbackUri)) {
+        print('Detected Google OAuth from callback URL');
+        _currentOAuthProvider.value = 'google';
+        await _saveCurrentProvider('google');
+        _stateToProvider['current'] = 'google';
+        _stateToProvider['provider_type'] = 'google';
+        await _saveStateMap();
+    }
+    
+    final String? state = callbackUri.queryParameters['state'];
+    await _loadStateMap();
+    
+    print('Initial OAuth state:');
+    print('Current provider (memory): ${_currentOAuthProvider.value}');
+    print('State parameter from URL: $state');
+    print('State map contents: $_stateToProvider');
+    
+    // Try all methods to identify the provider
+    String? providerName = _determineProvider(callbackUri);
+    
+    if (providerName == 'google' || _isGoogleOAuth(callbackUri)) {
+      providerName = 'google';
+      _currentOAuthProvider.value = 'google';
+      await _saveCurrentProvider('google');
+    }
+    
+    if (providerName == null || providerName.isEmpty) {
+      error.value = 'Authentication Error: Unable to determine OAuth provider';
+      print('Failed to determine provider. URL: $callbackUri');
+      isLoading.value = false;
+      return;
+    }
+
+    print('Determined provider: $providerName');
+    
+    // Update state map with current provider
+    _stateToProvider['current'] = providerName;
+    if (state != null) {
+      _stateToProvider[state] = providerName;
+    }
+    await _saveStateMap();
+    
+    // Process the callback
+    await _processOAuthCallback(
+      callbackUri,
+      isGoogleProvider: providerName.toLowerCase() == 'google'
+    );
   }
 
   // --- Fetch PKCE Parameters from Backend ---
@@ -447,6 +683,12 @@ class AuthController extends GetxController {
     required String code,
     required String state,
   }) async {
+    print('\nStarting code exchange with backend:');
+    print('Provider: $provider');
+    print('Code available: ${code.isNotEmpty}');
+    print('State: $state');
+    print('Current provider in memory: ${_currentOAuthProvider.value}');
+    print('State map: $_stateToProvider\n');
     if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
       error.value = 'Server configuration not set.';
       print('Cannot exchange code: Server config missing.');
@@ -476,11 +718,24 @@ class AuthController extends GetxController {
 
     // For Google, we'll proceed even if state is missing
     final bool isGoogleProvider = provider.toLowerCase() == 'google';
-    final bool isStateValid = !pkceRequired || state == pkceState.value || isGoogleProvider;
+    final bool isStateValid = isGoogleProvider || // Google OAuth sometimes drops state
+                             !pkceRequired || // Non-PKCE flows don't require state validation
+                             state == pkceState.value || // PKCE state matches
+                             (state != null && _stateToProvider.containsKey(state)); // State in map
 
     if (!isStateValid) {
-      print('Warning: OAuth state mismatch but continuing for Google provider');
-      // We'll continue anyway as Google OAuth sometimes drops state parameter
+      print('OAuth state validation failed:');
+      print('- Provider: $provider');
+      print('- Is Google: $isGoogleProvider');
+      print('- PKCE Required: $pkceRequired');
+      print('- State Parameter: $state');
+      print('- PKCE State: ${pkceState.value}');
+      print('- State in Map: ${state != null && _stateToProvider.containsKey(state)}');
+      
+      error.value = 'Invalid OAuth state parameter';
+      isLoading.value = false;
+      await _cleanupOAuthState(state);
+      return;
     }
 
     print('Exchanging code with backend for provider: $provider');
@@ -496,7 +751,11 @@ class AuthController extends GetxController {
         requestData['state'] = pkceState.value;
       }
       
+      print('Sending code exchange request to backend for provider: $provider');
+      print('Request data: $requestData');
+      
       final response = await dio.post('/v1/oauth2/$provider', data: requestData);
+      print('Received response from backend: ${response.data}');
 
       if (response.statusCode == 200 && response.data != null) {
         final String? backendToken = response.data['token'];
@@ -678,17 +937,84 @@ class AuthController extends GetxController {
   Future<Uri> startLocalServerAndAwaitCallback() async {
     await stopLocalServer(); // Ensure any previous server is stopped
     
+    // Load and verify state before starting server
+    await _loadStateMap();
+    final currentProvider = _currentOAuthProvider.value;
+    final providerType = _stateToProvider['provider_type'];
+    
+    print('\n=== Starting OAuth Server ===');
+    print('Starting server with provider: $currentProvider');
+    print('Provider type: $providerType');
+    
+    if (currentProvider.isEmpty && providerType != null) {
+      _currentOAuthProvider.value = providerType;
+      await _saveCurrentProvider(providerType);
+    }
+    
     if (_callbackCompleter != null && !_callbackCompleter!.isCompleted) {
       _callbackCompleter!.completeError(Exception('Previous callback completer was not completed'));
     }
     _callbackCompleter = Completer<Uri>();
+    print('Current provider: ${_currentOAuthProvider.value}');
+    print('State map: $_stateToProvider');
+    print('Provider type: ${_stateToProvider['provider_type']}');
+    print('===========================\n');
 
     final router = Router();
     router.get('/oauth-callback', (Request request) async {
       print('OAuth callback received by local server: ${request.requestedUri}');
+      
+      // Load saved state and ensure provider info is preserved
+      await _loadStateMap();
+      final String? state = request.requestedUri.queryParameters['state'];
+      final String scope = request.requestedUri.queryParameters['scope'] ?? '';
+      
+      print('\nServer callback received with provider info:');
+      print('Current provider type: ${_stateToProvider['provider_type']}');
+      print('Current provider: ${_currentOAuthProvider.value}');
+      
+      // If we have a provider type stored, ensure it's set in memory
+      if (_stateToProvider['provider_type'] != null) {
+        _currentOAuthProvider.value = _stateToProvider['provider_type']!;
+      }
+      
+      print('Local server callback state:');
+      print('- Current provider: ${_currentOAuthProvider.value}');
+      print('- State map: $_stateToProvider');
+      print('- State param: $state');
+      print('- Scope: $scope');
+      
+      // First check if we already have provider information
+    if (_currentOAuthProvider.value.isNotEmpty) {
+      print('Using existing provider: ${_currentOAuthProvider.value}');
+    }
+    // Then try to restore from state if needed
+    else if (state != null && _stateToProvider.containsKey(state)) {
+        final provider = _stateToProvider[state];
+        _currentOAuthProvider.value = provider!;
+        _stateToProvider['current'] = provider;
+        print('Restored provider from state mapping: $provider');
+      } else if (_currentOAuthProvider.value.isEmpty) {
+        // Try to detect provider from various sources
+        if (scope.toLowerCase().contains('google') || 
+            request.requestedUri.toString().contains('accounts.google.com')) {
+          _currentOAuthProvider.value = 'google';
+          _stateToProvider['current'] = 'google';
+          _stateToProvider['provider_type'] = 'google';
+          print('Setting Google as provider in local server');
+        } else if (state != null && _stateToProvider.containsKey(state)) {
+          final provider = _stateToProvider[state];
+          _currentOAuthProvider.value = provider!;
+          _stateToProvider['current'] = provider;
+          print('Restored provider from state map: $provider');
+        }
+        await _saveStateMap();
+        await _saveCurrentProvider(_currentOAuthProvider.value);
+        print('Updated provider state in local server: ${_currentOAuthProvider.value}');
+      }
+      
       if (!_callbackCompleter!.isCompleted) {
         _callbackCompleter!.complete(request.requestedUri);
-        // Process callback immediately to prevent race conditions
         handleOAuthCallback(request.requestedUri);
       }
       // Respond to the browser to close the tab/window

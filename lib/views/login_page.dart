@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:url_launcher/url_launcher.dart'; // Added
-import 'package:font_awesome_flutter/font_awesome_flutter.dart'; // Added
-import 'package:agixtsdk/agixtsdk.dart'; // Added
+import 'package:url_launcher/url_launcher.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:agixtsdk/agixtsdk.dart';
+import 'package:uuid/uuid.dart';
 import '../controllers/auth_controller.dart';
 import '../controllers/server_config_controller.dart';
 
@@ -107,54 +108,110 @@ class LoginPage extends StatelessWidget {
 
   // Function to launch OAuth URL
   Future<void> _handleOAuthLogin(Map<String, dynamic> provider) async {
-    final String authorizeUrl = provider['authorize'];
-    final String clientId = provider['client_id'];
-    final String scopes = provider['scopes'];
-    final String providerName = provider['name'].toLowerCase();
-    // IMPORTANT: Redirect URI needs careful handling for mobile apps.
-    // --- Start Local Server and Prepare Redirect URI ---
-    final localServerPort = authController.getLocalServerPort(); // Use getter from AuthController
-    final String redirectUri = 'http://localhost:$localServerPort/oauth-callback';
-    print('Starting local server for redirect URI: $redirectUri');
-    // Start server and get the future that completes when callback is received
-    final Future<Uri?> callbackFuture = authController.startLocalServerAndAwaitCallback();
-    // --- End Local Server Setup ---
+    try {
+      final String authorizeUrl = provider['authorize'];
+      final String clientId = provider['client_id'];
+      final String scopes = provider['scopes'];
+      final String providerName = provider['name'].toLowerCase();
+      
+      print('\nInitializing OAuth flow for: $providerName');
+      print('Authorization URL: $authorizeUrl');
+    
+      // Store provider information
+      await authController.storeOAuthProvider(providerName);
+      print('Initialized OAuth flow with provider: $providerName');
+    
+      // IMPORTANT: Redirect URI needs careful handling for mobile apps.
+      // --- Start Local Server and Prepare Redirect URI ---
+      final localServerPort = authController.getLocalServerPort(); // Use getter from AuthController
+      final String redirectUri = 'http://localhost:$localServerPort/oauth-callback';
+      print('Starting local server for redirect URI: $redirectUri');
+      // Start server and get the future that completes when callback is received
+      final Future<Uri?> callbackFuture = authController.startLocalServerAndAwaitCallback();
+      // --- End Local Server Setup ---
 
-    // Construct the full URL
-    // Note: Encoding parameters is crucial
-    final Uri url = Uri.parse(authorizeUrl).replace(queryParameters: {
-      'client_id': clientId,
-      'scope': scopes,
-      'response_type': 'code', // Standard for OAuth 2.0 Authorization Code flow
-      'redirect_uri': redirectUri,
-      if (providerName == 'google') 'access_type': 'offline', // Google specific
-      // Add other provider-specific params if needed
-    });
+      // Check if this provider requires PKCE
+      final bool pkceRequired = provider['pkce_required'] ?? false;
 
-    if (await canLaunchUrl(url)) {
-      await launchUrl(url, mode: LaunchMode.externalApplication); // Opens in external browser
-
-      // --- Await Callback ---
-      print('Waiting for OAuth callback...');
-      // Wait for the local server to receive the callback from the browser redirect
-      final Uri? callbackUri = await callbackFuture;
-
-      if (callbackUri != null) {
-        print('OAuth callback received by local server: $callbackUri');
-        // Pass the full callback URI to the controller for processing (code exchange, etc.)
-        await authController.handleOAuthCallback(callbackUri);
-      } else {
-        // This means the server timed out or failed to start
-        print('OAuth flow failed, timed out, or server error.');
-        // Error message should already be set in AuthController
-        // Get.snackbar('Error', 'Authentication failed or timed out.'); // Optionally show snackbar
+      // Get PKCE challenge and state if required
+      if (pkceRequired) {
+        await authController.fetchPkceParametersForProvider();
       }
-      // --- End Await Callback ---
 
-    } else {
-      print('Could not launch $url');
-      Get.snackbar('Error', 'Could not open authentication page.');
-      // Ensure server stops if we couldn't even launch the URL
+      // Generate state parameter and link it to the provider
+      final String state = const Uuid().v4();
+      print('Generated state for OAuth flow: $state');
+      
+      // Store state mapping with provider linkage
+      await authController.addStateToProvider(state, providerName);
+      
+      // Verify provider state is maintained
+      print('Verifying provider state:');
+      print('State mapping: $state -> $providerName');
+      print('State parameter mapped to provider: $state -> $providerName');
+      
+      // Construct the full URL with provider-specific parameters
+      final Map<String, String> queryParams = {
+        'client_id': clientId,
+        'scope': scopes,
+        'response_type': 'code',
+        'redirect_uri': redirectUri,
+        'state': state, // Always include state parameter
+      };
+
+      // Add provider-specific parameters
+      switch (providerName) {
+        case 'google':
+          queryParams['access_type'] = 'offline';
+          queryParams['prompt'] = 'consent';
+          break;
+        case 'github':
+          // Add GitHub-specific parameters if needed
+          break;
+        // Add cases for other providers as needed
+      }
+
+      // Add PKCE parameters if required
+      if (pkceRequired) {
+        await authController.fetchPkceParametersForProvider();
+        if (authController.getPkceChallenge().isNotEmpty) {
+          queryParams['code_challenge'] = authController.getPkceChallenge();
+          queryParams['code_challenge_method'] = 'S256';
+        }
+      }
+
+      final Uri url = Uri.parse(authorizeUrl).replace(queryParameters: queryParams);
+
+      print('Launching OAuth URL with state parameter: ${url.queryParameters['state']}');
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication); // Opens in external browser
+
+        // --- Await Callback ---
+        print('Waiting for OAuth callback...');
+        // Wait for the local server to receive the callback
+        final Uri? callbackUri = await callbackFuture;
+
+        if (callbackUri != null) {
+          print('OAuth callback received:');
+          print('URL: $callbackUri');
+          // Pass the full callback URI to the controller for processing (code exchange, etc.)
+          await authController.handleOAuthCallback(callbackUri);
+        } else {
+          // This means the server timed out or failed to start
+          print('OAuth flow failed, timed out, or server error.');
+          Get.snackbar('Error', 'Authentication failed or timed out.');
+        }
+        // --- End Await Callback ---
+
+      } else {
+        print('Could not launch $url');
+        Get.snackbar('Error', 'Could not open authentication page.');
+        // Ensure server stops if we couldn't even launch the URL
+        await authController.stopLocalServer();
+      }
+    } catch (e) {
+      print('Error during OAuth flow: $e');
+      Get.snackbar('Error', 'Failed to complete authentication: ${e.toString()}');
       await authController.stopLocalServer();
     }
   }
