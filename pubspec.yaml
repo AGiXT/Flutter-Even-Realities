@@ -24,6 +24,7 @@ dependencies:
   shelf: ^1.4.1 # For local HTTP server
   shelf_router: ^1.1.4 # Router for shelf
 
+  crypto: ^3.0.3 # For PKCE code generation
 dev_dependencies:
   flutter_test:
     sdk: flutter

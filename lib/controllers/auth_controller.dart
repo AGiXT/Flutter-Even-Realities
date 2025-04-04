@@ -7,6 +7,9 @@ import 'package:shelf/shelf.dart' as shelf; // Add prefix for shelf Response
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:agixtsdk/agixtsdk.dart';
+import 'dart:math'; // For random number generation
+import 'dart:convert'; // For base64UrlEncode and utf8
+import 'package:crypto/crypto.dart'; // For SHA256 hashing
 import 'package:shared_preferences/shared_preferences.dart';
 import 'server_config_controller.dart';
 import 'package:app_links/app_links.dart';
@@ -25,6 +28,7 @@ class AuthController extends GetxController {
   final RxString pkceState = ''.obs;
   final RxString pkceCodeChallenge = ''.obs;
   final RxString _currentOAuthProvider = ''.obs;
+  final RxString _pkceCodeVerifier = ''.obs; // Store the code verifier locally
   late final ServerConfigController _serverConfigController;
   SharedPreferences? _prefs;
   static const String _tokenKey = 'auth_token';
@@ -163,6 +167,32 @@ class AuthController extends GetxController {
   }
   // --- End OAuth Callback Handling ---
 
+  // --- PKCE Helper Functions ---
+  String _generateRandomString(int length) {
+    final random = Random.secure();
+    final values = List<int>.generate(length, (i) => random.nextInt(256));
+    return base64UrlEncode(values).replaceAll('=', ''); // Use base64Url encoding without padding
+  }
+
+  void _generatePkceParameters() {
+    _pkceCodeVerifier.value = _generateRandomString(32); // Generate a 32-byte random verifier
+    pkceCodeChallenge.value = _generateCodeChallenge(_pkceCodeVerifier.value);
+    pkceState.value = _generateRandomString(16); // Generate a 16-byte random state
+    print('Generated PKCE Verifier: ${_pkceCodeVerifier.value}');
+    print('Generated PKCE Challenge: ${pkceCodeChallenge.value}');
+    print('Generated State: ${pkceState.value}');
+  }
+
+  String _generateCodeChallenge(String verifier) {
+    final bytes = utf8.encode(verifier);
+    final digest = sha256.convert(bytes);
+    // Base64Url encode the SHA256 hash, removing padding
+    return base64UrlEncode(digest.bytes).replaceAll('=', '');
+  }
+
+  // Note: _generateState is effectively the same as _generateRandomString(16)
+  // --- End PKCE Helper Functions ---
+
 
   Future<void> fetchOAuthProviders() async {
     if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
@@ -212,23 +242,14 @@ class AuthController extends GetxController {
       return;
     }
 
+    // Generate PKCE parameters locally
+    _generatePkceParameters();
+
     _currentOAuthProvider.value = providerName.toLowerCase();
     isLoading.value = true;
     error.value = '';
-    pkceState.value = '';
-    pkceCodeChallenge.value = '';
 
     try {
-      final dio = Dio(BaseOptions(baseUrl: _serverConfigController.baseUri.value));
-      final pkceResponse = await dio.get('/v1/oauth2/pkce-simple');
-      if (pkceResponse.statusCode == 200 && pkceResponse.data != null) {
-        pkceCodeChallenge.value = pkceResponse.data['code_challenge'];
-        pkceState.value = pkceResponse.data['state'];
-        print('Received PKCE challenge and state from backend.');
-      } else {
-        throw Exception('Failed to get PKCE parameters from backend: ${pkceResponse.statusCode}');
-      }
-
       final String authUrl = provider['auth_url'];
       final String clientId = provider['client_id'];
       final String scopes = provider['scopes'];
@@ -286,9 +307,11 @@ class AuthController extends GetxController {
     print('Exchanging code with backend for provider: $provider');
     try {
       final dio = Dio(BaseOptions(baseUrl: _serverConfigController.baseUri.value));
-      final response = await dio.post('/v1/oauth2/$provider', data: {
+      // Include the code_verifier in the token exchange request
+      final response = await dio.post('/v1/oauth2/$provider', data: { // Assuming backend expects 'code_verifier'
         'code': code,
         'state': state,
+        'code_verifier': _pkceCodeVerifier.value,
       });
 
       if (response.statusCode == 200 && response.data != null) {
@@ -315,6 +338,7 @@ class AuthController extends GetxController {
       isLoading.value = false;
       pkceState.value = '';
       pkceCodeChallenge.value = '';
+      _pkceCodeVerifier.value = ''; // Clear the verifier after use
       _currentOAuthProvider.value = '';
     }
   }
