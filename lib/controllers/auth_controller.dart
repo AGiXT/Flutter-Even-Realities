@@ -147,23 +147,24 @@ class AuthController extends GetxController {
   // --- OAuth Callback Handling ---
   Future<void> handleOAuthCallback(Uri callbackUri) async {
     print('Processing OAuth callback via direct handler: $callbackUri');
-    // Add logging here to check the state map immediately
     print('--- State Map at start of handleOAuthCallback (after load) ---');
     print('Current state map: $_stateToProvider');
     print('-------------------------------------------------');
     isLoading.value = true;
     error.value = '';
+    
     try {
       final String? code = callbackUri.queryParameters['code'];
       final String? state = callbackUri.queryParameters['state'];
-      print('--- Extracted state from callback URI: "$state" ---'); // Log extracted state value or null
       final String? errorParam = callbackUri.queryParameters['error'];
-
+      
+      print('--- Extracted state from callback URI: "$state" ---');
+      
       if (errorParam != null) {
         error.value = 'OAuth Error: $errorParam';
         print('OAuth provider returned an error: $errorParam');
         isLoading.value = false;
-        if (state != null) _stateToProvider.remove(state); // Clean up state map
+        if (state != null) _stateToProvider.remove(state);
         _currentOAuthProvider.value = '';
         return;
       }
@@ -172,55 +173,73 @@ class AuthController extends GetxController {
         error.value = 'Authentication Error: Code parameter missing in callback.';
         print('Callback URI missing code: $callbackUri');
         isLoading.value = false;
-        if (state != null) _stateToProvider.remove(state); // Clean up state map
+        if (state != null) _stateToProvider.remove(state);
         _currentOAuthProvider.value = '';
         return;
       }
 
-      if (state == null || !_stateToProvider.containsKey(state)) {
-        error.value = 'Authentication Error: Invalid or missing state parameter.';
-        print('Error: State parameter missing or invalid in callback URI: $callbackUri');
-        print('Current state map (at failure point): $_stateToProvider'); // Log map for debugging
-        isLoading.value = false;
-        // Do not clear _currentOAuthProvider here, might be needed if app_links triggered this
-        return;
+      print('--- OAuth Provider Check ---');
+      print('Current OAuth Provider before restore: ${_currentOAuthProvider.value}');
+
+      // Restore current OAuth provider if not set
+      if (_currentOAuthProvider.value.isEmpty && _prefs != null) {
+        // Try to get the original provider name first, fall back to normalized if not found
+        final originalProvider = _prefs!.getString('current_oauth_provider_original');
+        final normalizedProvider = _prefs!.getString('current_oauth_provider');
+        
+        // Use original provider name if available, otherwise use normalized
+        _currentOAuthProvider.value = originalProvider ?? normalizedProvider ?? '';
+        print('Restored OAuth provider from preferences (original: $originalProvider, normalized: $normalizedProvider)');
+        print('Using provider: ${_currentOAuthProvider.value}');
       }
 
-      final providerName = _stateToProvider[state]!;
+      // Get provider details
+      final providerName = _currentOAuthProvider.value;
       final provider = oauthProviders.firstWhereOrNull((p) => p['name']?.toLowerCase() == providerName);
       final bool pkceRequired = provider?['pkce_required'] ?? false;
 
-      // Validate state match *only* if PKCE is required
+      print('Processing OAuth callback for provider: $providerName (PKCE Required: $pkceRequired)');
+
+      if (pkceRequired && (state == null || !_stateToProvider.containsKey(state))) {
+        error.value = 'Authentication Error: Invalid or missing state parameter for PKCE flow.';
+        print('Error: State parameter missing or invalid in PKCE flow: $callbackUri');
+        isLoading.value = false;
+        return;
+      }
+
       if (pkceRequired && state != pkceState.value) {
         error.value = 'Authentication Error: State mismatch.';
         print('Callback URI state does not match PKCE state: $state vs ${pkceState.value}');
         isLoading.value = false;
-        _stateToProvider.remove(state); // Clean up state map
+        _stateToProvider.remove(state);
         _currentOAuthProvider.value = '';
         return;
       }
 
+      print('Exchanging code with backend');
+      print('Provider: $providerName');
+      print('Code: ${code.substring(0, 10)}... (truncated)');
+      
       await _exchangeCodeWithBackend(
-        provider: providerName,
+        provider: _currentOAuthProvider.value,
         code: code,
-        state: pkceRequired ? state : '', // Pass state only if PKCE required
+        state: pkceRequired ? (state ?? '') : '',
       );
 
-      _stateToProvider.remove(state); // Clean up after successful processing
+      if (state != null) {
+        _stateToProvider.remove(state);
+      }
 
     } catch (e) {
       print('Error processing OAuth callback: $e');
       error.value = 'Error processing authentication callback: ${e.toString()}';
       isLoading.value = false;
-      // Clean up state map on error, if state exists
       if (callbackUri.queryParameters['state'] != null) {
         _stateToProvider.remove(callbackUri.queryParameters['state']!);
       }
       _currentOAuthProvider.value = '';
     }
-    // isLoading state is managed within _exchangeCodeWithBackend or the error paths above.
   }
-  // --- End OAuth Callback Handling ---
 
 
   // --- Fetch PKCE Parameters from Backend ---
@@ -308,7 +327,24 @@ class AuthController extends GetxController {
     }
     final bool pkceRequired = provider['pkce_required'] ?? false;
     print('PKCE required for $providerName: $pkceRequired');
-    _currentOAuthProvider.value = providerName.toLowerCase(); // Keep for potential compatibility/logging
+    final String normalizedProviderName = providerName.toLowerCase();
+    
+    // Always store provider name both in memory and persistent storage
+    _currentOAuthProvider.value = normalizedProviderName;
+    print('Setting current OAuth provider to: $normalizedProviderName');
+    
+    // Synchronous write to ensure it's available immediately
+    if (_prefs != null) {
+      // Store both normalized and original name to ensure exact match
+      _prefs!.setString('current_oauth_provider', normalizedProviderName);
+      _prefs!.setString('current_oauth_provider_original', providerName);
+      
+      // Verify storage
+      final storedProvider = _prefs!.getString('current_oauth_provider');
+      print('Verified stored OAuth provider: $storedProvider');
+    } else {
+      print('WARNING: SharedPreferences not initialized when storing provider name');
+    }
 
     String? stateValue; // This will hold the state sent to the provider (nullable)
 
@@ -354,8 +390,12 @@ class AuthController extends GetxController {
         'response_type': 'code',
         'scope': scopes,
         'redirect_uri': redirectUri,
-        'state': stateValue, // Use the determined state value
       };
+      
+      // Only add state if PKCE is required
+      if (pkceRequired) {
+        queryParams['state'] = stateValue;
+      }
 
       if (pkceRequired) {
         // PKCE state is already set in queryParams['state'] via stateValue
@@ -420,14 +460,22 @@ class AuthController extends GetxController {
       return;
     }
 
+    print('Attempting to exchange code for provider: "$provider"');
+    print('Available OAuth providers: ${oauthProviders.map((p) => p['name']).join(', ')}');
+    
     // Fetch provider data and determine if PKCE is required *before* checking state
     final providerData = oauthProviders.firstWhereOrNull((p) => p['name']?.toLowerCase() == provider.toLowerCase());
     if (providerData == null) {
-      error.value = 'Provider not found.';
-      print('Provider $provider not found during code exchange.');
+      error.value = 'Provider "$provider" not found in available providers.';
+      print('Provider "$provider" not found during code exchange.');
+      print('Provider comparison results:');
+      oauthProviders.forEach((p) {
+        print('  Provider: ${p['name']}, Lowercase match: ${p['name']?.toLowerCase() == provider.toLowerCase()}');
+      });
       isLoading.value = false;
       return;
     }
+    print('Found provider data: ${providerData['name']}');
     final bool pkceRequired = providerData['pkce_required'] ?? false;
 
     // Validate state only if PKCE is required
@@ -476,6 +524,11 @@ class AuthController extends GetxController {
       pkceState.value = '';
       pkceCodeChallenge.value = '';
       _currentOAuthProvider.value = '';
+      if (_prefs != null) {
+        await _prefs!.remove('current_oauth_provider');
+        await _prefs!.remove('current_oauth_provider_original');
+        print('Cleared OAuth provider preferences');
+      }
     }
   }
 
@@ -633,7 +686,10 @@ class AuthController extends GetxController {
   // Changed return type to Future<Uri> and handle timeout by throwing exception
   Future<Uri> startLocalServerAndAwaitCallback() async {
     await stopLocalServer(); // Ensure any previous server is stopped
-
+    
+    if (_callbackCompleter != null && !_callbackCompleter!.isCompleted) {
+      _callbackCompleter!.completeError(Exception('Previous callback completer was not completed'));
+    }
     _callbackCompleter = Completer<Uri>();
 
     final router = Router();
