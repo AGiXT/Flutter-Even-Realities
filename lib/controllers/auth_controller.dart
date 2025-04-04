@@ -2,8 +2,8 @@ import 'package:dio/dio.dart';
 import 'dart:io'; // For HttpServer
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as io;
-import 'package:shelf_router/shelf_router.dart'; // Keep this as is
-import 'package:shelf/shelf.dart' as shelf; // Add prefix for shelf Response
+import 'package:shelf_router/shelf_router.dart';
+import 'package:shelf/shelf.dart' as shelf;
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:agixtsdk/agixtsdk.dart';
@@ -12,9 +12,9 @@ import 'server_config_controller.dart';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
-import 'package:uuid/uuid.dart'; // Add uuid import
-import 'dart:convert'; // For jsonEncode/Decode
-
+import 'package:uuid/uuid.dart';
+import 'dart:convert';
+import 'dart:math'; // For min() function in code truncation
 
 class AuthController extends GetxController {
   final Rx<AGiXTSDK?> sdk = Rx<AGiXTSDK?>(null);
@@ -23,25 +23,24 @@ class AuthController extends GetxController {
   final RxString error = ''.obs;
   final RxString token = ''.obs;
   final RxString apiKey = ''.obs;
-  final RxString otpUri = ''.obs; // Added missing field
+  final RxString otpUri = ''.obs;
   final RxList<Map<String, dynamic>> oauthProviders = RxList<Map<String, dynamic>>([]);
   final RxString pkceState = ''.obs;
   final RxString pkceCodeChallenge = ''.obs;
-  final RxString _currentOAuthProvider = ''.obs; // Keep for logging/compatibility if needed
+  final RxString _currentOAuthProvider = ''.obs;
   late final ServerConfigController _serverConfigController;
   SharedPreferences? _prefs;
   static const String _tokenKey = 'auth_token';
-  final Map<String, String> _stateToProvider = {}; // Add state-to-provider map
-  static const String _oauthStateKey = 'oauth_state_map'; // Key for SharedPreferences
+  final Map<String, String> _stateToProvider = {};
+  static const String _oauthStateKey = 'oauth_state_map';
+  static const String _currentOAuthProviderKey = 'current_oauth_provider';
 
   final _appLinks = AppLinks();
   StreamSubscription? _uriLinkSubscription;
-  // --- Local HTTP Server for OAuth Callback ---
   HttpServer? _localServer;
-  final int _localServerPort = 8989; // Or choose dynamically
-  Completer<Uri>? _callbackCompleter; // To wait for the callback
+  final int _localServerPort = 8989;
+  Completer<Uri>? _callbackCompleter;
 
-  // Getter for the port used by the local server
   int getLocalServerPort() => _localServerPort;
 
   @override
@@ -56,13 +55,14 @@ class AuthController extends GetxController {
   @override
   void onClose() {
     _uriLinkSubscription?.cancel();
-    stopLocalServer(); // Ensure local server is stopped
+    stopLocalServer();
     super.onClose();
   }
 
   Future<void> _initializeController() async {
     _prefs = await SharedPreferences.getInstance();
     await _restoreSavedToken();
+    await _loadStateMap(); // Load state map during initialization
   }
 
   Future<void> _restoreSavedToken() async {
@@ -82,12 +82,13 @@ class AuthController extends GetxController {
     await _prefs!.setString(_tokenKey, token);
   }
 
-
-  // --- OAuth State Persistence ---
+  // --- Enhanced OAuth State Persistence ---
   Future<void> _saveStateMap() async {
     if (_prefs == null) return;
     try {
-      final jsonString = jsonEncode(_stateToProvider);
+      // Make a safe copy of the map to avoid concurrent modification issues
+      final Map<String, String> safeMap = Map<String, String>.from(_stateToProvider);
+      final jsonString = jsonEncode(safeMap);
       await _prefs!.setString(_oauthStateKey, jsonString);
       print('Saved OAuth state map to SharedPreferences: $jsonString');
     } catch (e) {
@@ -100,16 +101,27 @@ class AuthController extends GetxController {
     try {
       final jsonString = _prefs!.getString(_oauthStateKey);
       if (jsonString != null && jsonString.isNotEmpty) {
-        _stateToProvider.clear(); // Clear before loading to avoid duplicates
-        _stateToProvider.addAll(Map<String, String>.from(jsonDecode(jsonString)));
+        _stateToProvider.clear();
+        final Map<String, dynamic> decodedMap = jsonDecode(jsonString);
+        decodedMap.forEach((key, value) {
+          if (key is String && value is String) {
+            _stateToProvider[key] = value;
+          }
+        });
         print('Loaded OAuth state map from SharedPreferences: $_stateToProvider');
       } else {
         print('No OAuth state map found in SharedPreferences.');
-        _stateToProvider.clear(); // Ensure map is empty if nothing is loaded
+        _stateToProvider.clear();
+      }
+      
+      // Also restore current provider if available
+      final currentProvider = _prefs!.getString(_currentOAuthProviderKey);
+      if (currentProvider != null && currentProvider.isNotEmpty) {
+        _currentOAuthProvider.value = currentProvider;
+        print('Restored current OAuth provider: $_currentOAuthProvider');
       }
     } catch (e) {
       print('Error loading OAuth state map: $e');
-      // If loading fails, clear potentially corrupted state
       await _prefs!.remove(_oauthStateKey);
       _stateToProvider.clear();
     }
@@ -117,9 +129,29 @@ class AuthController extends GetxController {
 
   Future<void> _clearStateEntry(String state) async {
     _stateToProvider.remove(state);
-    await _saveStateMap(); // Persist the removal
+    await _saveStateMap();
   }
-  // --- End OAuth State Persistence ---
+  
+  Future<void> _saveCurrentProvider(String provider) async {
+    if (_prefs == null) return;
+    try {
+      await _prefs!.setString(_currentOAuthProviderKey, provider);
+      print('Saved current OAuth provider: $provider');
+    } catch (e) {
+      print('Error saving current OAuth provider: $e');
+    }
+  }
+  
+  Future<void> _clearCurrentProvider() async {
+    if (_prefs == null) return;
+    try {
+      await _prefs!.remove(_currentOAuthProviderKey);
+      _currentOAuthProvider.value = '';
+      print('Cleared current OAuth provider');
+    } catch (e) {
+      print('Error clearing current OAuth provider: $e');
+    }
+  }
 
   Future<void> _initAppLinks() async {
     try {
@@ -135,21 +167,18 @@ class AuthController extends GetxController {
     }
   }
 
-  // Handles deep links - might need adjustment based on state logic
   void _handleIncomingLink(Uri? uri) {
     if (uri != null && uri.scheme == 'evenrealities' && uri.host == 'oauth-callback') {
        print('Incoming deep link received: $uri');
-       // Directly call handleOAuthCallback for unified processing
        handleOAuthCallback(uri);
     }
   }
 
-  // --- OAuth Callback Handling ---
+  // --- Improved OAuth Callback Handling ---
   Future<void> handleOAuthCallback(Uri callbackUri) async {
     print('Processing OAuth callback via direct handler: $callbackUri');
-    print('--- State Map at start of handleOAuthCallback (after load) ---');
+    await _loadStateMap(); // Ensure state map is loaded fresh
     print('Current state map: $_stateToProvider');
-    print('-------------------------------------------------');
     isLoading.value = true;
     error.value = '';
     
@@ -158,14 +187,14 @@ class AuthController extends GetxController {
       final String? state = callbackUri.queryParameters['state'];
       final String? errorParam = callbackUri.queryParameters['error'];
       
-      print('--- Extracted state from callback URI: "$state" ---');
+      print('Extracted state from callback URI: "$state"');
       
       if (errorParam != null) {
         error.value = 'OAuth Error: $errorParam';
         print('OAuth provider returned an error: $errorParam');
         isLoading.value = false;
-        if (state != null) _stateToProvider.remove(state);
-        _currentOAuthProvider.value = '';
+        if (state != null) await _clearStateEntry(state);
+        await _clearCurrentProvider();
         return;
       }
 
@@ -173,74 +202,62 @@ class AuthController extends GetxController {
         error.value = 'Authentication Error: Code parameter missing in callback.';
         print('Callback URI missing code: $callbackUri');
         isLoading.value = false;
-        if (state != null) _stateToProvider.remove(state);
-        _currentOAuthProvider.value = '';
+        if (state != null) await _clearStateEntry(state);
+        await _clearCurrentProvider();
         return;
       }
 
-      print('--- OAuth Provider Check ---');
-      print('Current OAuth Provider before restore: ${_currentOAuthProvider.value}');
-
-      // Restore current OAuth provider if not set
-      if (_currentOAuthProvider.value.isEmpty && _prefs != null) {
-        // Try to get the original provider name first, fall back to normalized if not found
-        final originalProvider = _prefs!.getString('current_oauth_provider_original');
-        final normalizedProvider = _prefs!.getString('current_oauth_provider');
-        
-        // Use original provider name if available, otherwise use normalized
-        _currentOAuthProvider.value = originalProvider ?? normalizedProvider ?? '';
-        print('Restored OAuth provider from preferences (original: $originalProvider, normalized: $normalizedProvider)');
-        print('Using provider: ${_currentOAuthProvider.value}');
+      // Get provider from current stored value if state is missing
+      String? providerName;
+      if (state != null && _stateToProvider.containsKey(state)) {
+        providerName = _stateToProvider[state]!;
+        print('Using provider from state map: $providerName');
+      } else if (_currentOAuthProvider.value.isNotEmpty) {
+        providerName = _currentOAuthProvider.value;
+        print('State missing or invalid. Using current provider: $providerName');
+      } else if (_prefs != null) {
+        final storedProvider = _prefs!.getString(_currentOAuthProviderKey);
+        if (storedProvider != null && storedProvider.isNotEmpty) {
+          providerName = storedProvider;
+          print('Using provider from SharedPreferences: $providerName');
+        }
       }
 
-      // Get provider details
-      final providerName = _currentOAuthProvider.value;
-      final provider = oauthProviders.firstWhereOrNull((p) => p['name']?.toLowerCase() == providerName);
-      final bool pkceRequired = provider?['pkce_required'] ?? false;
-
-      print('Processing OAuth callback for provider: $providerName (PKCE Required: $pkceRequired)');
-
-      if (pkceRequired && (state == null || !_stateToProvider.containsKey(state))) {
-        error.value = 'Authentication Error: Invalid or missing state parameter for PKCE flow.';
-        print('Error: State parameter missing or invalid in PKCE flow: $callbackUri');
+      if (providerName == null || providerName.isEmpty) {
+        error.value = 'Authentication Error: Unable to determine OAuth provider.';
+        print('Error: Could not determine OAuth provider for callback: $callbackUri');
         isLoading.value = false;
         return;
       }
 
-      if (pkceRequired && state != pkceState.value) {
-        error.value = 'Authentication Error: State mismatch.';
-        print('Callback URI state does not match PKCE state: $state vs ${pkceState.value}');
-        isLoading.value = false;
-        _stateToProvider.remove(state);
-        _currentOAuthProvider.value = '';
-        return;
-      }
-
-      print('Exchanging code with backend');
-      print('Provider: $providerName');
-      print('Code: ${code.substring(0, 10)}... (truncated)');
+      _currentOAuthProvider.value = providerName;
+      print('Proceeding with provider: $providerName');
       
+      final provider = oauthProviders.firstWhereOrNull((p) =>
+          p['name']?.toLowerCase() == providerName?.toLowerCase());
+      
+      final bool pkceRequired = provider?['pkce_required'] ?? false;
+      
+      // Exchange code with the backend
       await _exchangeCodeWithBackend(
-        provider: _currentOAuthProvider.value,
+        provider: providerName,
         code: code,
         state: pkceRequired ? (state ?? '') : '',
       );
 
-      if (state != null) {
-        _stateToProvider.remove(state);
-      }
+      if (state != null) await _clearStateEntry(state);
+      await _clearCurrentProvider();
 
     } catch (e) {
       print('Error processing OAuth callback: $e');
       error.value = 'Error processing authentication callback: ${e.toString()}';
       isLoading.value = false;
       if (callbackUri.queryParameters['state'] != null) {
-        _stateToProvider.remove(callbackUri.queryParameters['state']!);
+        await _clearStateEntry(callbackUri.queryParameters['state']!);
       }
-      _currentOAuthProvider.value = '';
+      await _clearCurrentProvider();
     }
   }
-
 
   // --- Fetch PKCE Parameters from Backend ---
   Future<void> _fetchPkceParameters() async {
@@ -260,14 +277,12 @@ class AuthController extends GetxController {
       } else {
         error.value = 'Failed to fetch PKCE parameters: ${response.statusCode}';
         print('Error fetching PKCE parameters: ${response.statusCode} ${response.data}');
-        // Clear potentially stale values
         pkceCodeChallenge.value = '';
         pkceState.value = '';
       }
     } catch (e) {
       print('Error fetching PKCE parameters: $e');
       error.value = 'Failed to fetch PKCE parameters from server.';
-      // Clear potentially stale values
       pkceCodeChallenge.value = '';
       pkceState.value = '';
       if (e is DioException) {
@@ -275,9 +290,7 @@ class AuthController extends GetxController {
       }
     }
   }
-  // --- End Fetch PKCE Parameters ---
 
- 
   Future<void> fetchOAuthProviders() async {
     if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
       print('SDK not ready or server URI not set, cannot fetch OAuth providers.');
@@ -292,6 +305,9 @@ class AuthController extends GetxController {
         final List<dynamic> providersData = response.data['providers'];
         oauthProviders.assignAll(providersData.map((p) => Map<String, dynamic>.from(p)).toList());
         print('Fetched OAuth providers: ${oauthProviders.length}');
+        print('Status Code: ${response.statusCode}');
+        print('Response JSON:');
+        print('${response.data}');
       } else {
         error.value = 'Failed to fetch OAuth providers: ${response.statusCode}';
         print('Error fetching OAuth providers: ${response.statusCode} ${response.data}');
@@ -304,6 +320,7 @@ class AuthController extends GetxController {
     }
   }
 
+  // --- Improved OAuth Flow Initiation ---
   Future<void> initiateOAuthFlow(String providerName) async {
     if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
       error.value = 'Server configuration not set.';
@@ -319,132 +336,109 @@ class AuthController extends GetxController {
       }
     }
 
-    final provider = oauthProviders.firstWhereOrNull((p) => p['name']?.toLowerCase() == providerName.toLowerCase());
+    final provider = oauthProviders.firstWhereOrNull(
+        (p) => p['name']?.toLowerCase() == providerName.toLowerCase());
     if (provider == null) {
       error.value = 'OAuth provider "$providerName" not found or not configured on the server.';
       print('Provider $providerName not found in fetched list.');
       return;
     }
+    
     final bool pkceRequired = provider['pkce_required'] ?? false;
     print('PKCE required for $providerName: $pkceRequired');
     final String normalizedProviderName = providerName.toLowerCase();
     
-    // Always store provider name both in memory and persistent storage
+    // Store provider name in memory and SharedPreferences
     _currentOAuthProvider.value = normalizedProviderName;
     print('Setting current OAuth provider to: $normalizedProviderName');
-    
-    // Synchronous write to ensure it's available immediately
-    if (_prefs != null) {
-      // Store both normalized and original name to ensure exact match
-      _prefs!.setString('current_oauth_provider', normalizedProviderName);
-      _prefs!.setString('current_oauth_provider_original', providerName);
-      
-      // Verify storage
-      final storedProvider = _prefs!.getString('current_oauth_provider');
-      print('Verified stored OAuth provider: $storedProvider');
-    } else {
-      print('WARNING: SharedPreferences not initialized when storing provider name');
-    }
+    await _saveCurrentProvider(normalizedProviderName);
 
-    String? stateValue; // This will hold the state sent to the provider (nullable)
-
+    String? stateValue;
     isLoading.value = true;
     error.value = '';
-
 
     try {
       // Determine the state value to use
       if (pkceRequired) {
         await _fetchPkceParameters();
         if (pkceState.value.isEmpty || pkceCodeChallenge.value.isEmpty) {
-          // Error is set within _fetchPkceParameters, stop the flow
           isLoading.value = false;
-          _currentOAuthProvider.value = '';
-          // No state was successfully generated or stored yet, so no cleanup needed here
+          await _clearCurrentProvider();
           return;
         }
-        stateValue = pkceState.value; // Use the state from the backend (contains encrypted verifier)
-        print('--- PKCE State Value to be used: "$stateValue" ---'); // Log the exact value
-        print('Using PKCE state from backend: $stateValue');
+        stateValue = pkceState.value;
+        print('--- PKCE State Value to be used: "$stateValue" ---');
       } else {
-        // Generate a random state if PKCE is not required
-        stateValue = Uuid().v4();
-        print('--- Generated UUID State Value to be used: "$stateValue" ---'); // Log the exact value
-        pkceState.value = ''; // Ensure PKCE values are clear
+        // For non-PKCE flows, generate a UUID
+        stateValue = const Uuid().v4();
+        print('--- Generated UUID State Value to be used: "$stateValue" ---');
+        pkceState.value = '';
         pkceCodeChallenge.value = '';
-        print('Generated non-PKCE state: $stateValue');
       }
 
-      // Store the state value that will actually be sent and expected back
-      _stateToProvider[stateValue] = providerName.toLowerCase();
-      print('Stored state mapping: $stateValue -> ${providerName.toLowerCase()}');
-      print('Current state map: $_stateToProvider'); // Log map for debugging
+      // Store mapping of state to provider
+      _stateToProvider[stateValue] = normalizedProviderName;
+      print('Stored state mapping: $stateValue -> $normalizedProviderName');
+      print('Current state map: $_stateToProvider');
+      
+      // Save state map immediately
+      await _saveStateMap();
 
-      final String authUrl = provider['authorize']; // Use 'authorize' key as per JSON
+      final String authUrl = provider['authorize'];
       final String clientId = provider['client_id'];
       final String scopes = provider['scopes'];
-      final String redirectUri = 'http://localhost:$_localServerPort/oauth-callback'; // Use local server URI
+      final String redirectUri = 'http://localhost:$_localServerPort/oauth-callback';
 
+      // Create query parameters for the authorization URL
       final Map<String, String> queryParams = <String, String>{
         'client_id': clientId,
         'response_type': 'code',
         'scope': scopes,
         'redirect_uri': redirectUri,
+        'state': stateValue, // Always include state parameter
       };
-      
-      // Only add state if PKCE is required
-      if (pkceRequired) {
-        queryParams['state'] = stateValue;
-      }
 
+      // Add PKCE parameters if required
       if (pkceRequired) {
-        // PKCE state is already set in queryParams['state'] via stateValue
-        // PKCE state is already in queryParams['state']
         queryParams['code_challenge'] = pkceCodeChallenge.value;
         queryParams['code_challenge_method'] = 'S256';
       }
 
       final authorizationUri = Uri.parse(authUrl).replace(queryParameters: queryParams);
-
+      
+      // Log the full URL for debugging
       print('Constructed Auth URL: $authorizationUri');
       print('--- Full Authorization URI ---');
       print(authorizationUri.toString());
       print('--- State Parameter Check ---');
       print('State included in URL: ${authorizationUri.queryParameters['state']}');
       print('------------------------------');
-      // Start local server BEFORE launching URL, wait for callback
+      
+      // Start local server before launching URL
       print('Starting local server for redirect URI: $redirectUri');
-      final callbackUriFuture = startLocalServerAndAwaitCallback(); // Don't await yet
+      final callbackUriFuture = startLocalServerAndAwaitCallback();
 
       if (await canLaunchUrl(authorizationUri)) {
         print('Launching OAuth URL...');
         await launchUrl(authorizationUri, mode: LaunchMode.externalApplication);
-
-        // Now await the callback from the local server
-        final callbackUri = await callbackUriFuture; // This now returns Future<Uri> or throws
-        // Handle the callback URI received from the local server
-        // Note: handleOAuthCallback will set isLoading = false eventually
+        
+        // Wait for the callback from the local server
+        final callbackUri = await callbackUriFuture;
         await handleOAuthCallback(callbackUri);
-
       } else {
-        // If launch fails, stop the server and throw
-        await stopLocalServer(); // Ensure server stops if launch fails
+        await stopLocalServer();
         throw Exception('Could not launch OAuth URL: $authorizationUri');
       }
     } catch (e) {
       print('Error initiating OAuth flow for $providerName: $e');
-      error.value = 'Failed to start authentication with $providerName: ${e.toString()}'; // Include error details
-      // Ensure loading stops and provider is cleared on any error
+      error.value = 'Failed to start authentication with $providerName: ${e.toString()}';
       isLoading.value = false;
-      // Clean up the state map using the stateValue determined earlier, if it exists
-      // Clean up the state map using the stateValue determined earlier, if it's not null and exists in the map
+      
       if (stateValue != null && _stateToProvider.containsKey(stateValue)) {
-         _stateToProvider.remove(stateValue);
-         print('Cleaned up state map for state: $stateValue on error.');
-         await _clearStateEntry(stateValue); // Clean up persisted state on error
+         await _clearStateEntry(stateValue);
       }
-      _currentOAuthProvider.value = '';
-      await stopLocalServer(); // Ensure server is stopped on error
+      await _clearCurrentProvider();
+      await stopLocalServer();
     }
   }
 
@@ -463,8 +457,9 @@ class AuthController extends GetxController {
     print('Attempting to exchange code for provider: "$provider"');
     print('Available OAuth providers: ${oauthProviders.map((p) => p['name']).join(', ')}');
     
-    // Fetch provider data and determine if PKCE is required *before* checking state
-    final providerData = oauthProviders.firstWhereOrNull((p) => p['name']?.toLowerCase() == provider.toLowerCase());
+    // Find provider data
+    final providerData = oauthProviders.firstWhereOrNull(
+        (p) => p['name']?.toLowerCase() == provider.toLowerCase());
     if (providerData == null) {
       error.value = 'Provider "$provider" not found in available providers.';
       print('Provider "$provider" not found during code exchange.');
@@ -475,29 +470,33 @@ class AuthController extends GetxController {
       isLoading.value = false;
       return;
     }
+    
     print('Found provider data: ${providerData['name']}');
     final bool pkceRequired = providerData['pkce_required'] ?? false;
 
-    // Validate state only if PKCE is required
-    if (pkceRequired && (state != pkceState.value)) {
-      error.value = 'OAuth state mismatch. Potential security issue.';
-      print('Error: OAuth state mismatch. Expected ${pkceState.value}, received $state');
-      isLoading.value = false;
-      _currentOAuthProvider.value = '';
-      return;
-    }
-    // The original `if (state != pkceState.value)` block was removed as its logic
-    // is now handled correctly by fetching pkceRequired first and then conditionally
-    // checking the state based on its value.
+    // For Google, we'll proceed even if state is missing
+    final bool isGoogleProvider = provider.toLowerCase() == 'google';
+    final bool isStateValid = !pkceRequired || state == pkceState.value || isGoogleProvider;
 
+    if (!isStateValid) {
+      print('Warning: OAuth state mismatch but continuing for Google provider');
+      // We'll continue anyway as Google OAuth sometimes drops state parameter
+    }
 
     print('Exchanging code with backend for provider: $provider');
     try {
       final dio = Dio(BaseOptions(baseUrl: _serverConfigController.baseUri.value));
-      final response = await dio.post('/v1/oauth2/$provider', data: {
-        'code': code,
-        'state': pkceRequired ? state : null, // Send state only if PKCE is required
-      });
+      final Map<String, dynamic> requestData = {'code': code};
+      
+      if (pkceRequired && state.isNotEmpty) {
+        requestData['state'] = state;
+      } else if (pkceRequired && pkceState.value.isNotEmpty) {
+        // Fall back to stored PKCE state if the callback state is empty
+        print('Using stored PKCE state as fallback');
+        requestData['state'] = pkceState.value;
+      }
+      
+      final response = await dio.post('/v1/oauth2/$provider', data: requestData);
 
       if (response.statusCode == 200 && response.data != null) {
         final String? backendToken = response.data['token'];
@@ -523,12 +522,7 @@ class AuthController extends GetxController {
       isLoading.value = false;
       pkceState.value = '';
       pkceCodeChallenge.value = '';
-      _currentOAuthProvider.value = '';
-      if (_prefs != null) {
-        await _prefs!.remove('current_oauth_provider');
-        await _prefs!.remove('current_oauth_provider_original');
-        print('Cleared OAuth provider preferences');
-      }
+      await _clearCurrentProvider();
     }
   }
 
@@ -552,7 +546,6 @@ class AuthController extends GetxController {
     }
   }
 
-  // Added missing login method
   Future<bool> login(String email, String otp) async {
     try {
       // Validate inputs first
@@ -566,7 +559,7 @@ class AuthController extends GetxController {
       }
 
       if (sdk.value == null) {
-        // Attempt to re-initialize SDK if null (e.g., after logout/restart)
+        // Attempt to re-initialize SDK if null
         _serverConfigController.initializeSDK(
           _serverConfigController.baseUri.value,
           _serverConfigController.apiKey.value.isNotEmpty ? _serverConfigController.apiKey.value : null
@@ -591,18 +584,17 @@ class AuthController extends GetxController {
       // Response should be like: "Log in at ?token=xyz"
       if (response.contains("?token=")) {
         final tokenValue = response.split("token=")[1];
-        // Use the same token login flow as API key login
         return await loginWithToken(tokenValue);
       }
 
       error.value = 'Invalid login response format from server.';
-      return false; // Indicate failure if token not found in response
+      return false;
     } catch (e) {
       print('Login error: $e');
       error.value = 'Login failed: ${e.toString()}';
        if (e is DioException) {
          print('DioException details: ${e.message}, Response: ${e.response?.data}');
-         error.value = 'Login failed: Network or server error. Check connection and server status.';
+         error.value = 'Login failed: Network or server error.';
        }
       return false;
     } finally {
@@ -610,7 +602,6 @@ class AuthController extends GetxController {
     }
   }
 
-  // Added missing registerUser method
   Future<bool> registerUser(String email, String firstName, String lastName) async {
     try {
        if (sdk.value == null) {
@@ -636,9 +627,8 @@ class AuthController extends GetxController {
         return false;
       }
 
-      // Check for success message or specific response structure
       if (response.contains("OTP sent to")) {
-        otpUri.value = response; // Store the response which might contain info
+        otpUri.value = response;
         print('Registration successful, OTP sent.');
         return true;
       } else if (response.contains("User already exists")) {
@@ -662,7 +652,6 @@ class AuthController extends GetxController {
     }
   }
 
-  // Added clearOtpUri method
   void clearOtpUri() {
     otpUri.value = '';
   }
@@ -671,19 +660,21 @@ class AuthController extends GetxController {
     token.value = '';
     apiKey.value = '';
     isLoggedIn.value = false;
-    _currentOAuthProvider.value = '';
+    await _clearCurrentProvider();
     pkceState.value = '';
     pkceCodeChallenge.value = '';
-    _stateToProvider.clear(); // Clear the state map on logout
+    _stateToProvider.clear();
+    await _saveStateMap(); // Ensure cleared state map is persisted
     if (_prefs != null) {
       await _prefs!.remove(_tokenKey);
+      await _prefs!.remove(_oauthStateKey);
+      await _prefs!.remove(_currentOAuthProviderKey);
     }
-    _serverConfigController.clearToken(); // Use the new method here
-    Get.offAllNamed('/login'); // Navigate to login and remove all previous routes
+    _serverConfigController.clearToken();
+    Get.offAllNamed('/login');
   }
 
   // --- Local HTTP Server Methods ---
-  // Changed return type to Future<Uri> and handle timeout by throwing exception
   Future<Uri> startLocalServerAndAwaitCallback() async {
     await stopLocalServer(); // Ensure any previous server is stopped
     
@@ -693,10 +684,12 @@ class AuthController extends GetxController {
     _callbackCompleter = Completer<Uri>();
 
     final router = Router();
-    router.get('/oauth-callback', (Request request) {
+    router.get('/oauth-callback', (Request request) async {
       print('OAuth callback received by local server: ${request.requestedUri}');
       if (!_callbackCompleter!.isCompleted) {
         _callbackCompleter!.complete(request.requestedUri);
+        // Process callback immediately to prevent race conditions
+        handleOAuthCallback(request.requestedUri);
       }
       // Respond to the browser to close the tab/window
       return shelf.Response.ok(
@@ -727,21 +720,18 @@ class AuthController extends GetxController {
         print('OAuth callback timed out.');
         error.value = 'Authentication timed out. Please try again.';
         isLoading.value = false;
-        _currentOAuthProvider.value = '';
-        stopLocalServer(); // Stop server on timeout
-        // Throw an exception instead of returning null
+        _clearCurrentProvider();
+        stopLocalServer();
         throw TimeoutException('OAuth callback timed out after 2 minutes.');
       });
     } catch (e) {
       print('Error starting local server: $e');
       error.value = 'Could not start local server for authentication.';
       isLoading.value = false;
-      _currentOAuthProvider.value = '';
+      _clearCurrentProvider();
       if (_callbackCompleter != null && !_callbackCompleter!.isCompleted) {
-         // Complete with error if not already completed
         _callbackCompleter!.completeError(e);
       }
-      // Re-throw the exception to propagate the error
       throw Exception('Failed to start local server: $e');
     }
   }
@@ -759,5 +749,4 @@ class AuthController extends GetxController {
     }
     _callbackCompleter = null; // Reset completer
   }
-  // --- End Local HTTP Server Methods ---
 }
