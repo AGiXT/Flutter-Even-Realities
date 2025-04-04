@@ -103,12 +103,11 @@ class AuthController extends GetxController {
         _stateToProvider.clear(); // Clear before loading to avoid duplicates
         _stateToProvider.addAll(Map<String, String>.from(jsonDecode(jsonString)));
         print('Loaded OAuth state map from SharedPreferences: $_stateToProvider');
-      }
-      } else { // Corrected: Removed extra brace before else
+      } else {
         print('No OAuth state map found in SharedPreferences.');
         _stateToProvider.clear(); // Ensure map is empty if nothing is loaded
-      } // Corrected: Closing brace for the 'if' statement
-    } catch (e) { // Corrected: 'catch' starts after 'try' block closes
+      }
+    } catch (e) {
       print('Error loading OAuth state map: $e');
       // If loading fails, clear potentially corrupted state
       await _prefs!.remove(_oauthStateKey);
