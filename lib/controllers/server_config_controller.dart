@@ -102,4 +102,11 @@ class ServerConfigController extends GetxController {
       initializeSDK(baseUri.value, token);
     }
   }
+
+  // Call this to clear the token/API key
+  void clearToken() {
+    apiKey.value = ''; // Clear local state
+    initializeSDK(baseUri.value, null); // Re-initialize SDK without a key
+  }
+
 }
