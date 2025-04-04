@@ -7,9 +7,6 @@ import 'package:shelf/shelf.dart' as shelf; // Add prefix for shelf Response
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:agixtsdk/agixtsdk.dart';
-import 'dart:math'; // For random number generation
-import 'dart:convert'; // For base64UrlEncode and utf8
-import 'package:crypto/crypto.dart'; // For SHA256 hashing
 import 'package:shared_preferences/shared_preferences.dart';
 import 'server_config_controller.dart';
 import 'package:app_links/app_links.dart';
@@ -28,7 +25,6 @@ class AuthController extends GetxController {
   final RxString pkceState = ''.obs;
   final RxString pkceCodeChallenge = ''.obs;
   final RxString _currentOAuthProvider = ''.obs;
-  final RxString _pkceCodeVerifier = ''.obs; // Store the code verifier locally
   late final ServerConfigController _serverConfigController;
   SharedPreferences? _prefs;
   static const String _tokenKey = 'auth_token';
@@ -123,7 +119,7 @@ class AuthController extends GetxController {
 
     try {
       final String? code = callbackUri.queryParameters['code'];
-      final String? state = callbackUri.queryParameters['state']; // Need state for PKCE
+      final String? state = callbackUri.queryParameters['state'];
       final String? errorParam = callbackUri.queryParameters['error'];
 
       if (errorParam != null) {
@@ -134,29 +130,38 @@ class AuthController extends GetxController {
         return;
       }
 
-      if (code != null && state != null) {
-        print('Received authorization code and state via direct handler: $code');
-        // Call the backend exchange method if provider context is available
-        // This assumes the flow was initiated and _currentOAuthProvider was set.
-        if (_currentOAuthProvider.value.isNotEmpty) {
-           _exchangeCodeWithBackend(
-             provider: _currentOAuthProvider.value,
-             code: code,
-             state: state,
-           );
-        } else {
-           // This case might happen if the callback is triggered without prior context,
-           // e.g., manually opening the callback URL.
-           print('Error: OAuth callback received but no provider context was stored.');
-           error.value = 'Authentication session error. Please try initiating the flow again.';
-           isLoading.value = false;
-        }
-      } else {
-        error.value = 'Callback received, but no code or state found.';
-        print('Callback URI did not contain code or state: $callbackUri');
+      if (code == null) {
+        error.value = 'Authentication Error: Code parameter missing in callback.';
+        print('Callback URI missing code: $callbackUri');
         isLoading.value = false;
         _currentOAuthProvider.value = ''; // Clear provider state
+        return;
       }
+
+      if (_currentOAuthProvider.value.isEmpty) {
+        error.value = 'Authentication session error. Please try initiating the flow again.';
+        print('Error: OAuth callback received but no provider context was stored.');
+        isLoading.value = false;
+        return;
+      }
+
+      final provider = oauthProviders.firstWhereOrNull((p) => p['name']?.toLowerCase() == _currentOAuthProvider.value);
+      final bool pkceRequired = provider?['pkce_required'] ?? false;
+
+      if (pkceRequired && state == null) {
+        error.value = 'Authentication Error: State parameter missing in callback.';
+        print('Callback URI received code but is missing the required state parameter: $callbackUri');
+        isLoading.value = false;
+        _currentOAuthProvider.value = ''; // Clear provider state
+        return;
+      }
+
+      await _exchangeCodeWithBackend(
+        provider: _currentOAuthProvider.value,
+        code: code,
+        state: state ?? '', // Use empty string if state is null and not required
+      );
+
     } catch (e) {
       print('Error processing OAuth callback: $e');
       error.value = 'Error processing authentication callback: ${e.toString()}';
@@ -167,33 +172,43 @@ class AuthController extends GetxController {
   }
   // --- End OAuth Callback Handling ---
 
-  // --- PKCE Helper Functions ---
-  String _generateRandomString(int length) {
-    final random = Random.secure();
-    final values = List<int>.generate(length, (i) => random.nextInt(256));
-    return base64UrlEncode(values).replaceAll('=', ''); // Use base64Url encoding without padding
+
+  // --- Fetch PKCE Parameters from Backend ---
+  Future<void> _fetchPkceParameters() async {
+    if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
+      error.value = 'Server configuration not set.';
+      print('Cannot fetch PKCE parameters: Server config missing.');
+      return;
+    }
+    try {
+      final dio = Dio(BaseOptions(baseUrl: _serverConfigController.baseUri.value));
+      final response = await dio.get('/v1/oauth2/pkce-simple');
+      if (response.statusCode == 200 && response.data != null) {
+        pkceCodeChallenge.value = response.data['code_challenge'];
+        pkceState.value = response.data['state']; // State contains encrypted verifier
+        print('Fetched PKCE Challenge: ${pkceCodeChallenge.value}');
+        print('Fetched State (Encrypted Verifier): ${pkceState.value}');
+      } else {
+        error.value = 'Failed to fetch PKCE parameters: ${response.statusCode}';
+        print('Error fetching PKCE parameters: ${response.statusCode} ${response.data}');
+        // Clear potentially stale values
+        pkceCodeChallenge.value = '';
+        pkceState.value = '';
+      }
+    } catch (e) {
+      print('Error fetching PKCE parameters: $e');
+      error.value = 'Failed to fetch PKCE parameters from server.';
+      // Clear potentially stale values
+      pkceCodeChallenge.value = '';
+      pkceState.value = '';
+      if (e is DioException) {
+         print('DioException details: ${e.message}, Response: ${e.response?.data}');
+      }
+    }
   }
+  // --- End Fetch PKCE Parameters ---
 
-  void _generatePkceParameters() {
-    _pkceCodeVerifier.value = _generateRandomString(32); // Generate a 32-byte random verifier
-    pkceCodeChallenge.value = _generateCodeChallenge(_pkceCodeVerifier.value);
-    pkceState.value = _generateRandomString(16); // Generate a 16-byte random state
-    print('Generated PKCE Verifier: ${_pkceCodeVerifier.value}');
-    print('Generated PKCE Challenge: ${pkceCodeChallenge.value}');
-    print('Generated State: ${pkceState.value}');
-  }
-
-  String _generateCodeChallenge(String verifier) {
-    final bytes = utf8.encode(verifier);
-    final digest = sha256.convert(bytes);
-    // Base64Url encode the SHA256 hash, removing padding
-    return base64UrlEncode(digest.bytes).replaceAll('=', '');
-  }
-
-  // Note: _generateState is effectively the same as _generateRandomString(16)
-  // --- End PKCE Helper Functions ---
-
-
+ 
   Future<void> fetchOAuthProviders() async {
     if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
       print('SDK not ready or server URI not set, cannot fetch OAuth providers.');
@@ -242,46 +257,83 @@ class AuthController extends GetxController {
       return;
     }
 
-    // Generate PKCE parameters locally
-    _generatePkceParameters();
-
     _currentOAuthProvider.value = providerName.toLowerCase();
+    final bool pkceRequired = provider['pkce_required'] ?? false;
     isLoading.value = true;
     error.value = '';
 
     try {
-      final String authUrl = provider['auth_url'];
+      // Fetch PKCE parameters only if required
+      if (pkceRequired) {
+        await _fetchPkceParameters();
+        if (pkceState.value.isEmpty || pkceCodeChallenge.value.isEmpty) {
+          // Error is set within _fetchPkceParameters
+          isLoading.value = false;
+          _currentOAuthProvider.value = '';
+          return;
+        }
+      } else {
+        // Clear PKCE values if not required
+        pkceState.value = '';
+        pkceCodeChallenge.value = '';
+      }
+
+      final String authUrl = provider['authorize']; // Use 'authorize' key as per JSON
       final String clientId = provider['client_id'];
       final String scopes = provider['scopes'];
-      final String redirectUri = 'evenrealities://oauth-callback';
+      final String redirectUri = 'http://localhost:$_localServerPort/oauth-callback'; // Use local server URI
 
-      final authorizationUri = Uri.parse(authUrl).replace(queryParameters: {
+      final Map<String, String> queryParams = {
         'client_id': clientId,
         'response_type': 'code',
         'scope': scopes,
         'redirect_uri': redirectUri,
-        'state': pkceState.value,
-        'code_challenge': pkceCodeChallenge.value,
-        'code_challenge_method': 'S256',
-      });
+      };
+      if (pkceRequired) {
+        queryParams['state'] = pkceState.value;
+        queryParams['code_challenge'] = pkceCodeChallenge.value;
+        queryParams['code_challenge_method'] = 'S256';
+      }
+
+      final authorizationUri = Uri.parse(authUrl).replace(queryParameters: queryParams);
 
       print('Constructed Auth URL: $authorizationUri');
+      print('--- Full Authorization URI ---');
+      print(authorizationUri.toString());
+      print('------------------------------');
+
+
+      // Start local server BEFORE launching URL, wait for callback
+      print('Starting local server for redirect URI: $redirectUri');
+      final callbackUriFuture = startLocalServerAndAwaitCallback(); // Don't await yet
 
       if (await canLaunchUrl(authorizationUri)) {
         print('Launching OAuth URL...');
         await launchUrl(authorizationUri, mode: LaunchMode.externalApplication);
+
+        // Now await the callback from the local server
+        final callbackUri = await callbackUriFuture;
+        if (callbackUri == null) {
+          // Error handled within startLocalServerAndAwaitCallback or timeout
+          throw Exception('Failed to receive callback from local server.');
+        }
+        // Handle the callback URI received from the local server
+        // Note: handleOAuthCallback will set isLoading = false eventually
+        await handleOAuthCallback(callbackUri);
+
       } else {
+        // If launch fails, stop the server and throw
+        await stopLocalServer(); // Ensure server stops if launch fails
         throw Exception('Could not launch OAuth URL: $authorizationUri');
       }
     } catch (e) {
       print('Error initiating OAuth flow for $providerName: $e');
       error.value = 'Failed to start authentication with $providerName.';
-      if (e is DioException) {
-        print('DioException: ${e.message}, Response: ${e.response?.data}');
-      }
+      // Ensure loading stops and provider is cleared on any error
+      isLoading.value = false;
       _currentOAuthProvider.value = '';
+      await stopLocalServer(); // Ensure server is stopped on error
     }
-    // Note: isLoading remains true until callback is handled
   }
 
   Future<void> _exchangeCodeWithBackend({
@@ -296,22 +348,35 @@ class AuthController extends GetxController {
       return;
     }
 
-    if (state != pkceState.value) {
+    // Fetch provider data and determine if PKCE is required *before* checking state
+    final providerData = oauthProviders.firstWhereOrNull((p) => p['name']?.toLowerCase() == provider.toLowerCase());
+    if (providerData == null) {
+      error.value = 'Provider not found.';
+      print('Provider $provider not found during code exchange.');
+      isLoading.value = false;
+      return;
+    }
+    final bool pkceRequired = providerData['pkce_required'] ?? false;
+
+    // Validate state only if PKCE is required
+    if (pkceRequired && (state != pkceState.value)) {
       error.value = 'OAuth state mismatch. Potential security issue.';
       print('Error: OAuth state mismatch. Expected ${pkceState.value}, received $state');
       isLoading.value = false;
       _currentOAuthProvider.value = '';
       return;
     }
+    // The original `if (state != pkceState.value)` block was removed as its logic
+    // is now handled correctly by fetching pkceRequired first and then conditionally
+    // checking the state based on its value.
+
 
     print('Exchanging code with backend for provider: $provider');
     try {
       final dio = Dio(BaseOptions(baseUrl: _serverConfigController.baseUri.value));
-      // Include the code_verifier in the token exchange request
-      final response = await dio.post('/v1/oauth2/$provider', data: { // Assuming backend expects 'code_verifier'
+      final response = await dio.post('/v1/oauth2/$provider', data: {
         'code': code,
-        'state': state,
-        'code_verifier': _pkceCodeVerifier.value,
+        'state': pkceRequired ? state : null, // Send state only if PKCE is required
       });
 
       if (response.statusCode == 200 && response.data != null) {
@@ -338,7 +403,6 @@ class AuthController extends GetxController {
       isLoading.value = false;
       pkceState.value = '';
       pkceCodeChallenge.value = '';
-      _pkceCodeVerifier.value = ''; // Clear the verifier after use
       _currentOAuthProvider.value = '';
     }
   }
