@@ -14,11 +14,13 @@ class OAuthResult {
   final String code;
   final String providerName;
   final String state;
+  final String redirectUri; // Add redirectUri
 
   OAuthResult({
     required this.code,
     required this.providerName,
     required this.state,
+    required this.redirectUri, // Add to constructor
   });
 }
 
@@ -53,50 +55,48 @@ class OAuthService {
   }
 
   // Pass the generated state and potential code verifier to the server handler
-  Future<void> _startServer(String providerName, String expectedState, String? codeVerifierForPkce) async {
+  Future<void> _startServer(String providerName, String expectedState, String redirectUri, String? codeVerifierForPkce) async {
     if (_server != null) {
       await _stopServer(); // Ensure previous server is stopped
     }
 
     final router = Router();
 
-    router.get(_redirectPath, (Request request) async {
+    // Define the handler function within the scope where redirectUri is available
+    Future<Response> handleRedirect(Request request) async {
       final code = request.url.queryParameters['code'];
       final stateReceived = request.url.queryParameters['state'];
 
-      // With JWT state from backend, we don't need to validate it here - backend will do that
-      if (!stateReceived!.startsWith('eyJ')) {
-        _completer?.completeError(Exception('OAuth failed: Invalid state format received.'));
+      // Validate received state matches expected state
+      if (stateReceived != expectedState) {
+        _completer?.completeError(Exception('OAuth failed: Invalid state received.'));
         await _stopServer();
         return Response.forbidden(
-          '<html><body><h1>Authentication Failed</h1><p>Invalid state format.</p></body></html>',
+          '<html><body><h1>Authentication Failed</h1><p>State mismatch.</p></body></html>',
           headers: {'content-type': 'text/html'},
         );
       }
 
 
-      if (code != null) {
+      if (code != null && code.isNotEmpty) {
         // Successfully received code
         if (stateReceived == null) {
           throw Exception('No state parameter received from OAuth provider');
         }
-        
-        // Validate authorization code format
-        if (!code.startsWith('4/0') || code.length < 50) {
-          throw Exception('Invalid authorization code format received from Google');
-        }
-        
+
+        // Validate the code exists and is not empty
         print("[OAuthService] Received valid authorization code"); // Log success
         print("[OAuthService] Code length: ${code.length}"); // Log code length
-        print("[OAuthService] State length: ${stateReceived.length}"); // Log state length
-        
+        print("[OAuthService] State validated successfully"); // Log state validation
+
         _completer?.complete(OAuthResult(
           code: code,
           providerName: providerName,
           state: stateReceived,
+          redirectUri: redirectUri, // Include redirectUri in the result
         ));
         await _stopServer(); // Stop server after handling redirect
-        
+
         // Return a simple success page or message
         return Response.ok(
           '<html><body><h1>Authentication Successful!</h1><p>You can close this window.</p></body></html>',
@@ -114,7 +114,10 @@ class OAuthService {
           headers: {'content-type': 'text/html'},
         );
       }
-    });
+    }
+
+    // Assign the handler function to the router
+    router.get(_redirectPath, handleRedirect);
 
     try {
       // Use IPv4 loopback address explicitly for better compatibility
@@ -152,7 +155,7 @@ class OAuthService {
     final String redirectUri = kIsWeb
         ? '$redirectScheme://$redirectHost${redirectPort == 80 || redirectPort == 443 ? '' : ':$redirectPort'}$_redirectPath'
         // For mobile/desktop, use the explicit loopback address and port
-        : 'http://${InternetAddress.loopbackIPv4.address}:$_port$_redirectPath';
+        : 'http://127.0.0.1:$_port$_redirectPath'; // Use 127.0.0.1 consistently
 
 // Initialize variables
 String state = _generateRandomString(32); // Default state
@@ -164,7 +167,7 @@ print("[OAuthService] Authenticate called for $providerName. PKCE Required: $use
 // Get PKCE challenge from backend if needed
 if (usePkce) {
   try {
-    final redirectEndpoint = 'http://${InternetAddress.loopbackIPv4.address}:$_port$_redirectPath';
+    final redirectEndpoint = 'http://127.0.0.1:$_port$_redirectPath'; // Use 127.0.0.1 consistently
     final pkceUrl = Uri.parse('$_baseUri/v1/oauth2/pkce-simple').replace(
       queryParameters: {
         'redirect_uri': redirectEndpoint
@@ -172,7 +175,7 @@ if (usePkce) {
     );
     print("[OAuthService] Getting PKCE with redirect: $redirectEndpoint");
     final pkceResponse = await http.get(pkceUrl);
-    
+
     if (pkceResponse.statusCode == 200) {
       final pkceData = jsonDecode(pkceResponse.body);
       print("[OAuthService] PKCE data from backend: $pkceData");
@@ -192,7 +195,7 @@ if (usePkce) {
       // Start server only for non-web platforms
        try {
          // Pass the JWT state through without validation
-         await _startServer(providerName, state, null);
+         await _startServer(providerName, state, redirectUri, null); // Pass redirectUri
        } catch (e) {
          return Future.error(e); // Propagate server start error
        }
@@ -214,9 +217,9 @@ final String authUrl = Uri.parse(authorizationUrl).replace(
   },
 ).toString();
 
-print("[OAuthService] Using state from backend");
-print("[OAuthService] State JWT length: ${state.length}");
-print("Launching OAuth URL: $authUrl");
+print("[OAuthService] Using state for secure validation");
+print("[OAuthService] State length: ${state.length}");
+print("[OAuthService] Launching OAuth URL: $authUrl");
 
 if (await canLaunchUrl(Uri.parse(authUrl))) {
   // For web, launch in the same window/tab to handle redirect easily
@@ -241,5 +244,9 @@ if (await canLaunchUrl(Uri.parse(authUrl))) {
   // Call this method when the app is closing or auth flow is cancelled
   Future<void> dispose() async {
     await _stopServer();
+    if (_completer?.isCompleted == false) {
+      _completer?.completeError(Exception('OAuth flow cancelled'));
+    }
+    _completer = null;
   }
 }

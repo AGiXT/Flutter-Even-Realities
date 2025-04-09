@@ -284,11 +284,17 @@ class AuthController extends GetxController {
       error.value = 'Server not configured.';
       return false;
     }
-
-    isLoading.value = true;
+    
+    // Reset state before starting OAuth flow
     error.value = '';
+    isLoading.value = true;
 
     try {
+      // Validate provider configuration
+      if (provider.isEmpty) {
+        throw Exception('Invalid OAuth provider configuration.');
+      }
+      
       final String providerName = provider['name'] ?? 'unknown';
       final String authorizationUrl = provider['authorize'] ?? '';
       final String clientId = provider['client_id'] ?? '';
@@ -326,11 +332,12 @@ class AuthController extends GetxController {
         'X-OAuth-Provider': oauthResult.providerName.toLowerCase(),
       };
 
-      // Use the same state from the authorization flow
+      // Use the state and redirect_uri from the OAuthResult
       final bodyMap = {
         'code': oauthResult.code,
         'state': oauthResult.state,
-        'referrer': '', // Example: Or use a configured app URI
+        'redirect_uri': oauthResult.redirectUri, // Use redirectUri from the result
+        'referrer': oauthResult.redirectUri, // Send the actual redirect URI as the referrer
       };
       final body = jsonEncode(bodyMap);
       
@@ -341,6 +348,9 @@ class AuthController extends GetxController {
       
       final response = await http.post(backendUrl, headers: headers, body: body)
           .timeout(const Duration(seconds: 45));
+
+      // Reset error state before processing response
+      error.value = '';
 
       print("Backend response status: ${response.statusCode}");
       print("Backend response body: ${response.body}");
@@ -365,11 +375,15 @@ class AuthController extends GetxController {
 
         // Check if user was already logged in (linking account)
          if (token.value.isNotEmpty && responseData.containsKey('detail') && responseData['detail'].contains("connected successfully")) {
-           // Account linked successfully, no new token needed, maybe refresh user data?
            print("OAuth provider ${oauthResult.providerName} linked successfully.");
-           // Optionally: Fetch updated user details from backend if needed
+           error.value = 'Account linked successfully!';
            isLoading.value = false;
-           return true; // Indicate success, but no navigation needed if already logged in
+           return true;
+         }
+
+         // Clear existing token for new OAuth login
+         if (token.value.isNotEmpty) {
+           await logout();
          }
 
 
@@ -407,9 +421,15 @@ class AuthController extends GetxController {
     } catch (e) {
       print("OAuth Error: $e");
       error.value = e.toString();
+      // Ensure token is cleared on OAuth failure if not linking
+      if (!token.value.isEmpty) {
+        await logout();
+      }
       return false;
     } finally {
       isLoading.value = false;
+      // Clean up any dangling OAuth state
+      _oauthService.dispose();
     }
   }
 
