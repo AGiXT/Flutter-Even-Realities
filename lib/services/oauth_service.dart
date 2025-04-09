@@ -160,7 +160,8 @@ class OAuthService {
 // Initialize variables
 String state = _generateRandomString(32); // Default state
 String? codeChallenge;
-bool usePkce = pkceRequired || providerName.toLowerCase() == 'google';
+// Disable PKCE for Google due to backend incompatibility
+bool usePkce = pkceRequired && providerName.toLowerCase() != 'google';
 
 print("[OAuthService] Authenticate called for $providerName. PKCE Required: $usePkce");
 
