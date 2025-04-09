@@ -161,7 +161,7 @@ class _LoginPageState extends State<LoginPage> {
                         border: OutlineInputBorder(),
                         labelStyle: TextStyle(color: Colors.grey[400]),
                       ),
-                      style: TextStyle(color: Colors.white),
+                      style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color), // Use theme text color
                     )
                   : // Email/OTP login
                     Column(
@@ -174,7 +174,7 @@ class _LoginPageState extends State<LoginPage> {
                             labelStyle: TextStyle(color: Colors.grey[400]),
                           ),
                           keyboardType: TextInputType.emailAddress,
-                          style: TextStyle(color: Colors.white),
+                          style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color), // Use theme text color
                         ),
                         SizedBox(height: 20),
                         TextField(
@@ -185,7 +185,7 @@ class _LoginPageState extends State<LoginPage> {
                             labelStyle: TextStyle(color: Colors.grey[400]),
                           ),
                           keyboardType: TextInputType.number,
-                          style: TextStyle(color: Colors.white),
+                          style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color), // Use theme text color
                         ),
                       ],
                     )
@@ -256,7 +256,7 @@ class _LoginPageState extends State<LoginPage> {
                   return Column(
                     children: [
                       const Divider(height: 30, thickness: 1),
-                      const Text("Or continue with:", style: TextStyle(color: Colors.grey)),
+                      Text("Or continue with:", style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color)), // Use theme text color
                       const SizedBox(height: 15),
                       Wrap( // Use Wrap for better layout if many providers
                         spacing: 15.0, // Horizontal space between buttons

@@ -29,10 +29,10 @@ class _EvenAIListPageState extends State<EvenAIListPage> {
     ),
     body: Obx(() {
       if (controller.items.isEmpty && !EvenAI.isEvenAISyncing.value) {
-        return const Center(
+        return Center( // Remove const
           child: Text(
             "Press and hold left TouchBar to engage Even AI.",
-            style: TextStyle(color: Colors.grey),
+            style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color), // Use theme color
             textAlign: TextAlign.center,
           ),
         );
@@ -78,7 +78,7 @@ class _EvenAIListPageState extends State<EvenAIListPage> {
               child: Container(
                 alignment: Alignment.centerLeft,
                 decoration: BoxDecoration(
-                  color: Color(0xFFFEF991).withOpacity(0.2),
+                  color: Theme.of(context).cardColor, // Use theme card color
                   borderRadius: BorderRadius.circular(5),
                 ),
                 margin: EdgeInsets.only(top: 8, bottom: 8),
@@ -99,7 +99,7 @@ class _EvenAIListPageState extends State<EvenAIListPage> {
     return  Expanded(
               child: Container(
                 decoration: BoxDecoration(
-                  color: Color(0xFFFEF991).withOpacity(0.2),
+                  color: Theme.of(context).cardColor, // Use theme card color
                   borderRadius: BorderRadius.circular(5),
                 ),
                 margin: EdgeInsets.only(top: 8, bottom: 8),

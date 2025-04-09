@@ -32,11 +32,17 @@ class _BmpState extends State<BmpPage> {
                 child: Container(
                   height: 60,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Theme.of(context).cardColor, // Use theme card color
                     borderRadius: BorderRadius.circular(5),
                   ),
                   alignment: Alignment.center,
-                  child: const Text("BMP 1", style: TextStyle(fontSize: 16)),
+                  child: Text(
+                    "BMP 1",
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
+                    )
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -49,11 +55,17 @@ class _BmpState extends State<BmpPage> {
                 child: Container(
                   height: 60,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Theme.of(context).cardColor, // Use theme card color
                     borderRadius: BorderRadius.circular(5),
                   ),
                   alignment: Alignment.center,
-                  child: const Text("BMP 2", style: TextStyle(fontSize: 16)),
+                  child: Text(
+                    "BMP 2",
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
+                    )
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -65,11 +77,17 @@ class _BmpState extends State<BmpPage> {
                 child: Container(
                   height: 60,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Theme.of(context).cardColor, // Use theme card color
                     borderRadius: BorderRadius.circular(5),
                   ),
                   alignment: Alignment.center,
-                  child: const Text("Exit", style: TextStyle(fontSize: 16)),
+                  child: Text(
+                    "Exit",
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
+                    )
+                  ),
                 ),
               ),
             ],

@@ -43,7 +43,7 @@ class _TextPageState extends State<TextPage> {
             width: double.infinity,
             height: 300,
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: Theme.of(context).cardColor, // Use theme card color
               borderRadius: BorderRadius.circular(5),
             ),
             margin: const EdgeInsets.only(bottom: 16),
@@ -65,7 +65,7 @@ class _TextPageState extends State<TextPage> {
             child: Container(
               height: 60,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: Theme.of(context).cardColor, // Use theme card color
                 borderRadius: BorderRadius.circular(5),
               ),
               alignment: Alignment.center,
@@ -73,8 +73,8 @@ class _TextPageState extends State<TextPage> {
                 "Send to Glasses",
                 style: TextStyle(
                   color: BleManager.get().isConnected && tfController.text.isNotEmpty 
-                    ? Colors.black
-                    : Colors.grey,
+                    ? Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
+                    : Colors.grey, // Keep grey for disabled state
                   fontSize: 16,
                 ),
               ),

@@ -69,6 +69,7 @@ class _ServerConfigPageState extends State<ServerConfigPage> {
     ));
   }
 
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -97,7 +98,7 @@ class _ServerConfigPageState extends State<ServerConfigPage> {
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
-                      color: Colors.grey[100],
+                      color: Theme.of(context).textTheme.headlineSmall?.color, // Use theme color
                     ),
                   ),
 
@@ -110,13 +111,13 @@ class _ServerConfigPageState extends State<ServerConfigPage> {
                       labelText: 'Base URI',
                       prefixIcon: Icon(
                         Icons.link,
-                        color: Colors.grey[600],
+                        color: Theme.of(context).iconTheme.color, // Use theme icon color
                       ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    style: TextStyle(color: Colors.grey[100]),
+                    style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color), // Use theme text color
                   ),
                   SizedBox(height: 20),
 
@@ -127,13 +128,13 @@ class _ServerConfigPageState extends State<ServerConfigPage> {
                       labelText: 'API Key (optional)',
                       prefixIcon: Icon(
                         Icons.vpn_key,
-                        color: Colors.grey[600],
+                        color: Theme.of(context).iconTheme.color, // Use theme icon color
                       ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    style: TextStyle(color: Colors.grey[100]),
+                    style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color), // Use theme text color
                     obscureText: true,
                   ),
                   SizedBox(height: 30),

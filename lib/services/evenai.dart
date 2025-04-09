@@ -3,7 +3,8 @@ import 'dart:io';
 import 'dart:math';
 import 'package:agixt_even_realities/ble_manager.dart';
 import 'package:agixt_even_realities/controllers/evenai_model_controller.dart';
-import 'package:agixt_even_realities/services/api_services_deepseek.dart';
+import 'package:agixtsdk/agixtsdk.dart'; // Import AGiXTSDK from package
+import 'package:agixt_even_realities/controllers/server_config_controller.dart'; // Import ServerConfigController
 import 'package:agixt_even_realities/services/proto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -145,8 +146,14 @@ class EvenAI {
       return;
     }
 
-    final apiService = ApiDeepSeekService();
-    String answer = await apiService.sendChatRequest(combinedText);
+    // Use the globally configured AGiXTSDK instance from GetX
+    final agixtSdk = Get.find<AGiXTSDK>();
+    final serverConfigController = Get.find<ServerConfigController>(); // Get ServerConfigController instance
+    String answer = await agixtSdk.chat(
+        serverConfigController.selectedAgent.value, // Use selected agent
+        combinedText, // userInput (positional)
+        "EvenAIConversation" // conversation (positional)
+    );
   
     print("recordOverByOS----startSendReply---combinedText-------*$combinedText*-----answer----$answer----");
 

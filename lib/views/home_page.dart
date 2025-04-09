@@ -9,6 +9,7 @@ import 'package:agixt_even_realities/views/features_page.dart';
 import 'package:agixt_even_realities/views/extensions_page.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../controllers/server_config_controller.dart'; // Import ServerConfigController
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -20,6 +21,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   Timer? scanTimer;
   bool isScanning = false;
+  final ServerConfigController serverConfigController = Get.find<ServerConfigController>(); // Get controller instance
 
   @override
   void initState() {
@@ -64,7 +66,7 @@ class _HomePageState extends State<HomePage> {
                 height: 72,
                 padding: const EdgeInsets.only(left: 16, right: 16),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: Theme.of(context).cardColor, // Use theme card color
                   borderRadius: BorderRadius.circular(5),
                 ),
                 child: Row(
@@ -74,9 +76,14 @@ class _HomePageState extends State<HomePage> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Pair: ${glasses['channelNumber']}'),
                         Text(
-                            'Left: ${glasses['leftDeviceName']} \nRight: ${glasses['rightDeviceName']}'),
+                          'Pair: ${glasses['channelNumber']}',
+                          style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color), // Use theme text color
+                        ),
+                        Text(
+                          'Left: ${glasses['leftDeviceName']} \nRight: ${glasses['rightDeviceName']}',
+                          style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color), // Use theme text color
+                        ),
                       ],
                     ),
                   ],
@@ -87,6 +94,53 @@ class _HomePageState extends State<HomePage> {
         ),
       );
 
+  // Widget to build the agent selection dropdown for AppBar
+  Widget _buildAgentSelector() {
+    return Obx(() {
+      final bool isEnabled = serverConfigController.isConfigured.value && serverConfigController.availableAgents.isNotEmpty;
+      final List<Map<String, dynamic>> agents = serverConfigController.availableAgents;
+      final String? currentSelection = serverConfigController.selectedAgent.value;
+
+      // Ensure the current selection is valid among available agents
+      final String? validSelection = agents.any((agent) => agent['name'] == currentSelection)
+          ? currentSelection
+          : (agents.isNotEmpty ? agents.first['name'] : null);
+
+      // Update controller if selection was invalid and agents are available
+      if (validSelection != currentSelection && validSelection != null) {
+         WidgetsBinding.instance.addPostFrameCallback((_) {
+            serverConfigController.selectAgent(validSelection);
+         });
+      }
+
+      // Use PopupMenuButton for AppBar placement
+      return PopupMenuButton<String>(
+        icon: Icon(Icons.person_pin_circle_outlined, color: isEnabled ? Theme.of(context).appBarTheme.foregroundColor : Colors.grey),
+        tooltip: isEnabled ? "Select Agent" : (serverConfigController.isConfigured.value ? "No agents found" : "Server not configured"),
+        enabled: isEnabled,
+        initialValue: validSelection,
+        onSelected: (String newValue) {
+          serverConfigController.selectAgent(newValue);
+        },
+        itemBuilder: (BuildContext context) {
+          if (!isEnabled) {
+            return <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(
+                value: null, // Non-selectable
+                child: Text('No agents available'),
+              ),
+            ];
+          }
+          return agents.map((agent) {
+            return PopupMenuItem<String>(
+              value: agent['name'],
+              child: Text(agent['name'] ?? 'Unnamed Agent'),
+            );
+          }).toList();
+        },
+      );
+    });
+  }
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
@@ -108,22 +162,7 @@ class _HomePageState extends State<HomePage> {
                 child: Icon(Icons.menu),
               ),
             ),
-            InkWell(
-              onTap: () {
-                print("To Extensions Page...");
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ExtensionsPage()),
-                );
-              },
-              splashColor: Colors.transparent,
-              highlightColor: Colors.transparent,
-              child: const Padding(
-                padding:
-                    EdgeInsets.only(left: 16, top: 12, bottom: 14, right: 16),
-                child: Icon(Icons.extension),
-              ),
-            ),
+            _buildAgentSelector(), // Add agent selector to AppBar actions
           ],
         ),
         body: Padding(
@@ -142,7 +181,7 @@ class _HomePageState extends State<HomePage> {
                 child: Container(
                   height: 100,
                   decoration: BoxDecoration(
-                    color: Colors.black,
+                    color: Theme.of(context).cardColor, // Use theme card color
                     borderRadius: BorderRadius.circular(10),
                     boxShadow: [
                       BoxShadow(
@@ -155,7 +194,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   alignment: Alignment.center,
                   child: Text(BleManager.get().getConnectionStatus(),
-                      style: const TextStyle(fontSize: 16)),
+                      style: TextStyle(fontSize: 16, color: Theme.of(context).textTheme.bodyLarge?.color)), // Use theme text color
                 ),
               ),
               const SizedBox(height: 16),
@@ -175,7 +214,7 @@ class _HomePageState extends State<HomePage> {
                       );
                     },
                     child: Container(
-                      color: Colors.white,
+                      color: Theme.of(context).cardColor, // Use theme card color
                       padding: const EdgeInsets.all(16),
                       alignment: Alignment.topCenter,
                       child: SingleChildScrollView(
@@ -195,8 +234,8 @@ class _HomePageState extends State<HomePage> {
                                     style: TextStyle(
                                         fontSize: 14,
                                         color: BleManager.get().isConnected
-                                            ? Colors.black
-                                            : Colors.grey.withOpacity(0.5)),
+                                            ? Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
+                                            : Colors.grey.withOpacity(0.5)), // Keep grey for disconnected state
                                     textAlign: TextAlign.center,
                                   ),
                           ),
