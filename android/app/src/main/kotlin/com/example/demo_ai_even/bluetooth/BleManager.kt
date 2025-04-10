@@ -109,6 +109,12 @@ class BleManager private constructor() {
         } else {
             context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         }
+        
+        // Request Bluetooth permissions if not granted
+        if (!BlePermissionUtil.checkBluetoothPermission(context)) {
+            BlePermissionUtil.requestBluetoothPermissions(weakActivity.get()!!)
+        }
+        
         Log.v(LOG_TAG, "BleManager init success")
     }
 
@@ -116,6 +122,11 @@ class BleManager private constructor() {
      *
      */
     fun startScan(result: MethodChannel.Result) {
+        if (!BlePermissionUtil.checkBluetoothPermission(weakActivity.get()!!)) {
+            BlePermissionUtil.requestBluetoothPermissions(weakActivity.get()!!)
+            result.success(false)
+            return
+        }
         if (!checkBluetoothStatus()) {
             result.error("Permission", "", null)
             return

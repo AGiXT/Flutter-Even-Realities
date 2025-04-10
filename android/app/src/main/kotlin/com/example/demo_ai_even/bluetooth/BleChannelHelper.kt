@@ -34,7 +34,17 @@ object BleChannelHelper {
     fun initChannel(context: MainActivity, flutterEngine: FlutterEngine) {
         val binaryMessenger = flutterEngine.dartExecutor.binaryMessenger
         //  Method
-        bleMethodChannel = BleMethodChannel(MethodChannel(binaryMessenger, METHOD_CHANNEL_BLE_TAG))
+        val methodChannel = MethodChannel(binaryMessenger, METHOD_CHANNEL_BLE_TAG)
+        methodChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "requestPermissions" -> {
+                    BlePermissionUtil.requestBluetoothPermissions(context)
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+        bleMethodChannel = BleMethodChannel(methodChannel)
         //  Event
         EventChannel(binaryMessenger, EVENT_BLE_STATUS).setStreamHandler(context)
         EventChannel(binaryMessenger, EVENT_BLE_RECEIVE).setStreamHandler(context)

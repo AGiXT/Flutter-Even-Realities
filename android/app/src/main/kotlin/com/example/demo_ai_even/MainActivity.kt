@@ -7,6 +7,7 @@ import com.example.demo_ai_even.bluetooth.BleManager
 import com.example.demo_ai_even.cpp.Cpp
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import com.example.demo_ai_even.bluetooth.BlePermissionUtil
 import io.flutter.plugin.common.EventChannel
 
 class MainActivity: FlutterActivity(), EventChannel.StreamHandler {

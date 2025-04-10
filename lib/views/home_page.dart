@@ -10,6 +10,7 @@ import 'package:agixt_even_realities/views/extensions_page.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import '../controllers/server_config_controller.dart'; // Import ServerConfigController
+import 'package:permission_handler/permission_handler.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -34,13 +35,20 @@ class _HomePageState extends State<HomePage> {
   void _refreshPage() => setState(() {});
 
   Future<void> _startScan() async {
-    setState(() => isScanning = true);
-    await BleManager.get().startScan();
-    scanTimer?.cancel();
-    scanTimer = Timer(15.seconds, () {
-      // todo
-      _stopScan();
-    });
+    // Request Bluetooth permissions
+    var status = await Permission.bluetooth.request();
+    if (status.isGranted) {
+      setState(() => isScanning = true);
+      await BleManager.get().startScan();
+      scanTimer?.cancel();
+      scanTimer = Timer(15.seconds, () {
+        // todo
+        _stopScan();
+      });
+    } else if (status.isDenied || status.isPermanentlyDenied) {
+      // Open app settings to allow user to grant permission
+      await openAppSettings();
+    }
   }
 
   Future<void> _stopScan() async {
@@ -48,6 +56,47 @@ class _HomePageState extends State<HomePage> {
       await BleManager.get().stopScan();
       setState(() => isScanning = false);
     }
+  }
+
+  Widget bleDevicePicker() {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(
+            'Select Connected Devices',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color),
+          ),
+          const SizedBox(height: 10),
+          if (BleManager.get().isConnected)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton(
+                  onPressed: () {
+                    // Logic to select or interact with left device
+                    print('Left Device Selected');
+                  },
+                  child: Text('Left Device', style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    // Logic to select or interact with right device
+                    print('Right Device Selected');
+                  },
+                  child: Text('Right Device', style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                ),
+              ],
+            )
+          else
+            Text(
+              'No devices connected. Please connect a pair first.',
+              style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color),
+            ),
+          const SizedBox(height: 20),
+          blePairedList(),
+        ],
+      ),
+    );
   }
 
   Widget blePairedList() => Expanded(
@@ -199,50 +248,55 @@ class _HomePageState extends State<HomePage> {
               ),
               const SizedBox(height: 16),
               if (BleManager.get().getConnectionStatus() == 'Not connected')
-                blePairedList(),
+                bleDevicePicker(),
               if (BleManager.get().isConnected)
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () async {
-                      // todo
-                      print("To AI History List...");
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const EvenAIListPage(),
-                        ),
-                      );
-                    },
-                    child: Container(
-                      color: Theme.of(context).cardColor, // Use theme card color
-                      padding: const EdgeInsets.all(16),
-                      alignment: Alignment.topCenter,
-                      child: SingleChildScrollView(
-                        child: StreamBuilder<String>(
-                          stream: EvenAI.textStream,
-                          initialData:
-                              "Press and hold left TouchBar to engage Even AI.",
-                          builder: (context, snapshot) => Obx(
-                            () => EvenAI.isEvenAISyncing.value
-                                ? const SizedBox(
-                                    width: 50,
-                                    height: 50,
-                                    child: CircularProgressIndicator(),
-                                  )
-                                : Text(
-                                    snapshot.data ?? "Loading...",
-                                    style: TextStyle(
-                                        fontSize: 14,
-                                        color: BleManager.get().isConnected
-                                            ? Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
-                                            : Colors.grey.withOpacity(0.5)), // Keep grey for disconnected state
-                                    textAlign: TextAlign.center,
-                                  ),
+                Column(
+                  children: [
+                    bleDevicePicker(),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () async {
+                          // todo
+                          print("To AI History List...");
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const EvenAIListPage(),
+                            ),
+                          );
+                        },
+                        child: Container(
+                          color: Theme.of(context).cardColor, // Use theme card color
+                          padding: const EdgeInsets.all(16),
+                          alignment: Alignment.topCenter,
+                          child: SingleChildScrollView(
+                            child: StreamBuilder<String>(
+                              stream: EvenAI.textStream,
+                              initialData:
+                                  "Press and hold left TouchBar to engage Even AI.",
+                              builder: (context, snapshot) => Obx(
+                                () => EvenAI.isEvenAISyncing.value
+                                    ? const SizedBox(
+                                        width: 50,
+                                        height: 50,
+                                        child: CircularProgressIndicator(),
+                                      )
+                                    : Text(
+                                        snapshot.data ?? "Loading...",
+                                        style: TextStyle(
+                                            fontSize: 14,
+                                            color: BleManager.get().isConnected
+                                                ? Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
+                                                : Colors.grey.withOpacity(0.5)), // Keep grey for disconnected state
+                                        textAlign: TextAlign.center,
+                                      ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
             ],
           ),

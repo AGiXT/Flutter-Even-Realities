@@ -44,6 +44,8 @@ class BleManager {
 
   Future<void> startScan() async {
     try {
+      // Request permissions before starting scan
+      await _channel.invokeMethod('requestPermissions');
       await _channel.invokeMethod('startScan');
     } catch (e) {
       print('Error starting scan: $e');

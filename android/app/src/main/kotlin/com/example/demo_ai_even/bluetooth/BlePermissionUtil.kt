@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import android.content.Context
 
 object BlePermissionUtil {
 
@@ -27,15 +28,28 @@ object BlePermissionUtil {
     /**
      *  If permission not granted will call system permission dialog
      */
-    fun checkBluetoothPermission(context: Activity): Boolean {
+    fun checkBluetoothPermission(context: Context): Boolean {
         val missingPermissions = BLUETOOTH_PERMISSIONS.filter { permission ->
             ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
         }
         if (missingPermissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(context, missingPermissions.toTypedArray(), 1)
+            if (context is Activity) {
+                ActivityCompat.requestPermissions(context, missingPermissions.toTypedArray(), 1)
+            }
             return false
         }
         return true
+    }
+
+    fun requestBluetoothPermissions(context: Context) {
+        if (context is Activity) {
+            val missingPermissions = BLUETOOTH_PERMISSIONS.filter { permission ->
+                ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
+            }
+            if (missingPermissions.isNotEmpty()) {
+                ActivityCompat.requestPermissions(context, missingPermissions.toTypedArray(), 1)
+            }
+        }
     }
 
 }
