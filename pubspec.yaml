@@ -25,6 +25,8 @@ dependencies:
   crypto: ^3.0.6
   font_awesome_flutter: ^10.8.0
   permission_handler: ^11.3.1
+  google_fonts: ^6.2.1 # Add google_fonts
+  flutter_blue_plus: ^1.31.18 # Add flutter_blue_plus (check pub.dev for latest)
 
 dev_dependencies:
   flutter_test:

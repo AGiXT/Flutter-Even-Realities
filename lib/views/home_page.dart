@@ -2,14 +2,20 @@
 
 import 'dart:async';
 
-import 'package:agixt_even_realities/ble_manager.dart';
+// Remove old BleManager import
 import 'package:agixt_even_realities/services/evenai.dart';
 import 'package:agixt_even_realities/views/even_list_page.dart';
 import 'package:agixt_even_realities/views/features_page.dart';
 import 'package:agixt_even_realities/views/extensions_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart'; // Import for ScrollController jump
+import 'package:flutter/services.dart'; // Import for Clipboard
 import 'package:get/get.dart';
 import '../controllers/server_config_controller.dart'; // Import ServerConfigController
+import '../controllers/settings_controller.dart'; // Import SettingsController
+import '../controllers/log_controller.dart'; // Import LogController
+import '../services/bluetooth_service.dart'; // Import BluetoothService
+import 'package:google_fonts/google_fonts.dart'; // For monospace font
 import 'package:permission_handler/permission_handler.dart';
 
 class HomePage extends StatefulWidget {
@@ -22,41 +28,45 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   Timer? scanTimer;
   bool isScanning = false;
-  final ServerConfigController serverConfigController = Get.find<ServerConfigController>(); // Get controller instance
+  final ServerConfigController serverConfigController = Get.find<ServerConfigController>();
+  final SettingsController settingsController = Get.find<SettingsController>(); // Get SettingsController
+  final LogController logController = Get.find<LogController>(); // Get LogController
+  final BluetoothService bluetoothService = Get.find<BluetoothService>(); // Get BluetoothService
+  final ScrollController _logScrollController = ScrollController(); // For auto-scrolling logs
 
   @override
   void initState() {
     super.initState();
-    BleManager.get().setMethodCallHandler();
-    BleManager.get().startListening();
-    BleManager.get().onStatusChanged = _refreshPage;
+    // Remove old BleManager setup
+    // BleManager.get().setMethodCallHandler();
+    // BleManager.get().startListening();
+    // BleManager.get().onStatusChanged = _refreshPage; // Remove old status listener
+
+    // Listener to auto-scroll log console
+    logController.logMessages.listen((_) {
+      // Ensure controller is attached before trying to jump
+      if (_logScrollController.hasClients) {
+         // Use SchedulerBinding to scroll after the frame is built
+         SchedulerBinding.instance.addPostFrameCallback((_) {
+            _logScrollController.jumpTo(_logScrollController.position.maxScrollExtent);
+         });
+      }
+    });
   }
 
   void _refreshPage() => setState(() {});
 
+  // Updated _startScan to use BluetoothService
   Future<void> _startScan() async {
-    // Request Bluetooth permissions
-    var status = await Permission.bluetooth.request();
-    if (status.isGranted) {
-      setState(() => isScanning = true);
-      await BleManager.get().startScan();
-      scanTimer?.cancel();
-      scanTimer = Timer(15.seconds, () {
-        // todo
-        _stopScan();
-      });
-    } else if (status.isDenied || status.isPermanentlyDenied) {
-      // Open app settings to allow user to grant permission
-      await openAppSettings();
-    }
+    // Permissions should be handled by flutter_blue_plus or requested separately if needed
+    // Consider adding permission checks here using permission_handler if flutter_blue_plus doesn't handle it adequately
+    logController.addLog("[HomePage] User triggered scan.");
+    await bluetoothService.startScan();
+    // No need for manual timer/stopScan call here, service handles timeout
   }
 
-  Future<void> _stopScan() async {
-    if (isScanning) {
-      await BleManager.get().stopScan();
-      setState(() => isScanning = false);
-    }
-  }
+  // _stopScan is likely not needed anymore as the service handles it
+  // Future<void> _stopScan() async { ... }
 
   Widget bleDevicePicker() {
     return Expanded(
@@ -67,31 +77,31 @@ class _HomePageState extends State<HomePage> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color),
           ),
           const SizedBox(height: 10),
-          if (BleManager.get().isConnected)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(
-                  onPressed: () {
-                    // Logic to select or interact with left device
-                    print('Left Device Selected');
-                  },
-                  child: Text('Left Device', style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    // Logic to select or interact with right device
-                    print('Right Device Selected');
-                  },
-                  child: Text('Right Device', style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
-                ),
-              ],
-            )
-          else
-            Text(
-              'No devices connected. Please connect a pair first.',
-              style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color),
-            ),
+          // TODO: Update this section based on BluetoothService connection state
+          Obx(() => bluetoothService.isConnected.value // Use Obx for reactivity
+              ? Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      ElevatedButton(
+                        onPressed: () {
+                          // TODO: Logic to interact with connected device
+                          logController.addLog('[HomePage] Left Device interaction TBD');
+                        },
+                        child: Text('Left Device', style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                      ),
+                      ElevatedButton(
+                        onPressed: () {
+                           // TODO: Logic to interact with connected device
+                          logController.addLog('[HomePage] Right Device interaction TBD');
+                        },
+                        child: Text('Right Device', style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                      ),
+                    ],
+                  )
+              : const Text( // Show when not connected
+                    'No device connected.',
+                  )),
+            // This Row and Text are now inside the Obx above
           const SizedBox(height: 20),
           blePairedList(),
         ],
@@ -99,47 +109,39 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // Updated blePairedList to use BluetoothService
   Widget blePairedList() => Expanded(
-        child: ListView.separated(
-          separatorBuilder: (context, index) => const SizedBox(height: 5),
-          itemCount: BleManager.get().getPairedGlasses().length,
-          itemBuilder: (context, index) {
-            final glasses = BleManager.get().getPairedGlasses()[index];
-            return GestureDetector(
-              onTap: () async {
-                String channelNumber = glasses['channelNumber']!;
-                await BleManager.get().connectToGlasses("Pair_$channelNumber");
-                _refreshPage();
-              },
-              child: Container(
-                height: 72,
-                padding: const EdgeInsets.only(left: 16, right: 16),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).cardColor, // Use theme card color
-                  borderRadius: BorderRadius.circular(5),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Pair: ${glasses['channelNumber']}',
-                          style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color), // Use theme text color
-                        ),
-                        Text(
-                          'Left: ${glasses['leftDeviceName']} \nRight: ${glasses['rightDeviceName']}',
-                          style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color), // Use theme text color
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+        child: RefreshIndicator(
+          onRefresh: _startScan, // Call updated _startScan
+          child: Obx(() => ListView.separated( // Wrap with Obx to react to discoveredDevices changes
+                physics: const AlwaysScrollableScrollPhysics(),
+                separatorBuilder: (context, index) => const SizedBox(height: 5),
+                itemCount: bluetoothService.discoveredDevices.length,
+                itemBuilder: (context, index) {
+                  final discovered = bluetoothService.discoveredDevices[index];
+                  return ListTile( // Use ListTile for simplicity
+                     tileColor: Theme.of(context).cardColor,
+                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                     title: Text(
+                       discovered.name,
+                       style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color),
+                     ),
+                     subtitle: Text(
+                       discovered.id, // Show device ID
+                       style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color),
+                     ),
+                     trailing: ElevatedButton( // Add connect button
+                       child: const Text('Connect'),
+                       onPressed: () {
+                         bluetoothService.connectToDevice(discovered);
+                       },
+                     ),
+                     onTap: () { // Keep onTap for potential future use or remove
+                        bluetoothService.connectToDevice(discovered);
+                     },
+                  );
+                },
+              )),
         ),
       );
 
@@ -190,8 +192,74 @@ class _HomePageState extends State<HomePage> {
       );
     });
   }
+  // --- Log Console Widget ---
+  Widget _buildLogConsole() {
+    return Obx(() {
+      if (!settingsController.isDebugLoggingEnabled.value) {
+        return const SizedBox.shrink(); // Don't show if disabled
+      }
+
+      // Use a Column to hold the console and the copy button
+      return Container(
+        color: Colors.black87, // Background for the whole console area
+        padding: const EdgeInsets.only(top: 4.0, left: 8.0, right: 8.0, bottom: 4.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min, // Take minimum space needed
+          children: [
+            // Log List View Area
+            SizedBox(
+              height: 130, // Adjusted height for the list view
+              child: logController.logMessages.isEmpty
+                  ? Center(
+                      child: Text(
+                        'Debug console enabled. Logs will appear here.',
+                        style: GoogleFonts.robotoMono(color: Colors.greenAccent, fontSize: 12),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _logScrollController,
+                      itemCount: logController.logMessages.length,
+                      itemBuilder: (context, index) {
+                        final logEntry = logController.logMessages[index];
+                        return Text(
+                          logEntry.toString(),
+                          style: GoogleFonts.robotoMono(color: Colors.greenAccent, fontSize: 12),
+                        );
+                      },
+                    ),
+            ),
+            // Separator and Copy Button
+            const Divider(height: 1, color: Colors.grey),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                icon: const Icon(Icons.copy, size: 16, color: Colors.grey),
+                label: const Text('Copy Logs', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                onPressed: () {
+                  final allLogs = logController.logMessages.map((entry) => entry.toString()).join('\n');
+                  Clipboard.setData(ClipboardData(text: allLogs));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Logs copied to clipboard!'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+  // --- End Log Console Widget ---
+
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) {
+    // Log state during build
+    logController.addLog("[HomePage Build] isConnected: ${bluetoothService.isConnected.value}, Status: ${bluetoothService.connectionStatus.value}, Devices: ${bluetoothService.discoveredDevices.length}");
+    
+    return Scaffold( // Ensure Scaffold is returned directly
         appBar: AppBar(
           title: const Text('Even AI Demo'),
           actions: [
@@ -212,6 +280,14 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             _buildAgentSelector(), // Add agent selector to AppBar actions
+            // Add Settings Icon Button
+            IconButton(
+              icon: const Icon(Icons.settings),
+              tooltip: 'Settings',
+              onPressed: () {
+                Get.toNamed('/settings'); // Navigate to settings page
+              },
+            ),
           ],
         ),
         body: Padding(
@@ -222,8 +298,8 @@ class _HomePageState extends State<HomePage> {
             children: [
               GestureDetector(
                 onTap: () async {
-                  if (BleManager.get().getConnectionStatus() ==
-                      'Not connected') {
+                  // Trigger scan only if not connected
+                  if (!bluetoothService.isConnected.value) {
                     _startScan();
                   }
                 },
@@ -242,15 +318,19 @@ class _HomePageState extends State<HomePage> {
                     ],
                   ),
                   alignment: Alignment.center,
-                  child: Text(BleManager.get().getConnectionStatus(),
-                      style: TextStyle(fontSize: 16, color: Theme.of(context).textTheme.bodyLarge?.color)), // Use theme text color
+                  // Display reactive connection status
+                  child: Obx(() => Text(bluetoothService.connectionStatus.value,
+                      style: TextStyle(fontSize: 16, /* color: Theme.of(context).textTheme.bodyLarge?.color */))), // Added missing ')' for Text widget
                 ),
               ),
               const SizedBox(height: 16),
-              if (BleManager.get().getConnectionStatus() == 'Not connected')
-                bleDevicePicker(),
-              if (BleManager.get().isConnected)
-                Column(
+              // Show device list only when not connected
+              Obx(() => bluetoothService.isConnected.value
+                  ? const SizedBox.shrink() // Hide list when connected
+                  : bleDevicePicker()),
+              // Show AI history section only when connected
+              Obx(() => bluetoothService.isConnected.value
+                  ? Column( // This section shows when connected
                   children: [
                     bleDevicePicker(),
                     Expanded(
@@ -285,9 +365,9 @@ class _HomePageState extends State<HomePage> {
                                         snapshot.data ?? "Loading...",
                                         style: TextStyle(
                                             fontSize: 14,
-                                            color: BleManager.get().isConnected
-                                                ? Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
-                                                : Colors.grey.withOpacity(0.5)), // Keep grey for disconnected state
+                                            color: bluetoothService.isConnected.value // Use reactive state
+                                               ? Theme.of(context).textTheme.bodyLarge?.color
+                                               : Colors.grey.withOpacity(0.5)),
                                         textAlign: TextAlign.center,
                                       ),
                               ),
@@ -296,18 +376,24 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ),
                     ),
-                  ],
-                ),
-            ],
-          ),
-        ),
+                  ], // End children of Column shown when connected
+                )
+              : const SizedBox.shrink()), // Hide Column when not connected
+                // Removed extra closing parenthesis
+        _buildLogConsole(),
+            ], // End children of main Column inside Padding
+          ), // End main Column inside Padding
+        ), // End Padding
+        // (Log console will be inserted inside the Column below)
       );
+  }
 
   @override
   void dispose() {
     scanTimer?.cancel();
     isScanning = false;
-    BleManager.get().onStatusChanged = null;
+    // BleManager.get().onStatusChanged = null; // Remove old status listener cleanup
+    _logScrollController.dispose(); // Dispose scroll controller
     super.dispose();
   }
 }

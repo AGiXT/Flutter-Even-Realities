@@ -1,7 +1,8 @@
-import 'package:agixt_even_realities/ble_manager.dart';
+// import 'package:agixt_even_realities/ble_manager.dart'; // Removed old import
 import 'package:agixt_even_realities/services/text_service.dart';
 import 'package:flutter/material.dart';
-
+import 'package:agixt_even_realities/services/bluetooth_service.dart'; // Import BluetoothService
+import 'package:get/get.dart'; // Import Get
 class TextPage extends StatefulWidget {
   const TextPage({super.key});
 
@@ -10,6 +11,7 @@ class TextPage extends StatefulWidget {
 }
 
 class _TextPageState extends State<TextPage> {
+  final BluetoothService bluetoothService = Get.find<BluetoothService>(); // Get BluetoothService instance
 
   late TextEditingController tfController;
 
@@ -56,7 +58,8 @@ class _TextPageState extends State<TextPage> {
             ),
           ),
           GestureDetector(
-            onTap: !BleManager.get().isConnected && tfController.text.isNotEmpty
+            // TODO: Replace with BluetoothService connection check
+            onTap: false /* !bluetoothService.isConnected.value */ && tfController.text.isNotEmpty // Placeholder
               ? null
               : () async {
                 String content = tfController.text;
@@ -72,8 +75,9 @@ class _TextPageState extends State<TextPage> {
               child: Text(
                 "Send to Glasses",
                 style: TextStyle(
-                  color: BleManager.get().isConnected && tfController.text.isNotEmpty 
-                    ? Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
+                  // TODO: Replace with BluetoothService connection check
+                  color: false /* bluetoothService.isConnected.value */ && tfController.text.isNotEmpty // Placeholder
+                      ? Theme.of(context).textTheme.bodyLarge?.color
                     : Colors.grey, // Keep grey for disabled state
                   fontSize: 16,
                 ),

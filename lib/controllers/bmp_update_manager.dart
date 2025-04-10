@@ -2,9 +2,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crclib/catalog.dart';
-import 'package:agixt_even_realities/ble_manager.dart';
+// import 'package:agixt_even_realities/ble_manager.dart'; // Removed old import
 import 'package:agixt_even_realities/utils/utils.dart';
-
+import '../services/ble.dart'; // Import BleReceive definition
 class BmpUpdateManager {
   
   static bool isTransfering = false;
@@ -40,9 +40,10 @@ class BmpUpdateManager {
       Uint8List data = index == 0 ? Utils.addPrefixToUint8List([0x15, index & 0xff, 0x00, 0x1c, 0x00, 0x00],  pack) : Utils.addPrefixToUint8List([0x15, index & 0xff], pack);
       print("${DateTime.now()} updateBmp----data---*${data.length}---*$data----------");
 
-      await BleManager.sendData(
-          data,
-          lr: lr);
+      // TODO: Re-implement sendData using BluetoothService characteristic writes
+      // await BleManager.sendData(
+      //     data,
+      //     lr: lr);
 
       if (Platform.isIOS) {
         await Future.delayed(Duration(milliseconds: 8)); // 4 6 10 14  30
@@ -68,11 +69,14 @@ class BmpUpdateManager {
       }
       
       // notice the finish sending
-      var ret = await BleManager.request(
-        Uint8List.fromList([0x20, 0x0d, 0x0e]),
-        lr: lr,
-        timeoutMs: 3000,
-      );
+      // TODO: Re-implement request using BluetoothService characteristic writes/reads
+      // var ret = await BleManager.request(
+      //   Uint8List.fromList([0x20, 0x0d, 0x0e]),
+      //   lr: lr,
+      //   timeoutMs: 3000,
+      // );
+      var ret = BleReceive(); // Placeholder
+      ret.isTimeout = true; // Assume timeout
       print("${DateTime.now()} finishUpdate---lr---$lr--ret----${ret.data}-----");
       if (ret.isTimeout) {
         currentRetryTime++;
@@ -106,9 +110,12 @@ class BmpUpdateManager {
       val & 0xff,
     ]);
     
-    final ret = await BleManager.request(
-        Utils.addPrefixToUint8List([0x16], crc),
-        lr: lr);
+    // TODO: Re-implement request using BluetoothService characteristic writes/reads
+    // final ret = await BleManager.request(
+    //     Utils.addPrefixToUint8List([0x16], crc),
+    //     lr: lr);
+    final ret = BleReceive(); // Placeholder
+    ret.isTimeout = true; // Assume timeout
 
     print("${DateTime.now()} Crc32Xz---lr---$lr---ret--------${ret.data}------crc----$crc--");
 

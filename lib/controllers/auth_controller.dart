@@ -5,6 +5,7 @@ import 'package:agixtsdk/agixtsdk.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http; // Import http package
 import 'server_config_controller.dart';
+import 'log_controller.dart'; // Import LogController
 import '../services/oauth_service.dart'; // Import OAuthService
 
 class AuthController extends GetxController {
@@ -58,16 +59,26 @@ class AuthController extends GetxController {
   }
 
   Future<void> _restoreSavedToken() async {
-    if (_prefs == null) return;
+    final log = Get.find<LogController>(); // Get LogController instance
+    log.addLog("[AuthController] Attempting to restore saved token..."); // Log start
+    if (_prefs == null) {
+       log.addLog("[AuthController] SharedPreferences not initialized. Cannot restore token.");
+       return;
+    }
     
     final savedRawToken = _prefs!.getString(_tokenKey); // Get raw token
+    // Log retrieved token status (avoid logging the actual token for security)
+    log.addLog("[AuthController] Retrieved raw token from prefs: ${savedRawToken == null ? 'null' : (savedRawToken.isEmpty ? 'empty' : 'present')}");
+    
     if (savedRawToken != null && savedRawToken.isNotEmpty) {
+      log.addLog("[AuthController] Restoring token and setting logged in state."); // Log success
       token.value = "Bearer $savedRawToken"; // Set the full token for SDK use
       _serverConfigController.updateWithToken(savedRawToken); // Update server config with raw token
       isLoggedIn.value = true;
       // Fetch providers only after confirming server config and token are potentially set
       await fetchOAuthProviders();
     } else {
+      log.addLog("[AuthController] No valid token found in SharedPreferences."); // Log failure
       // If no token, still try fetching providers if server is configured
       if (_serverConfigController.isConfigured.value) {
         await fetchOAuthProviders();
@@ -77,8 +88,15 @@ class AuthController extends GetxController {
 
   // Saves the raw token (without "Bearer ")
   Future<void> _saveToken(String rawToken) async {
-    if (_prefs == null) return;
+    final log = Get.find<LogController>(); // Get LogController instance
+    // Log attempt status (avoid logging the actual token for security)
+    log.addLog("[AuthController] Attempting to save raw token: ${rawToken.isEmpty ? 'empty' : 'present'}");
+    if (_prefs == null) {
+      log.addLog("[AuthController] SharedPreferences not initialized. Cannot save token.");
+      return;
+    }
     await _prefs!.setString(_tokenKey, rawToken);
+    log.addLog("[AuthController] Token save operation completed."); // Log completion
   }
 
   String? _extractTokenFromResponse(String responseUrl) {
@@ -210,8 +228,9 @@ class AuthController extends GetxController {
   // --- OAuth Methods ---
 
   Future<void> fetchOAuthProviders() async {
+    final log = Get.find<LogController>(); // Get LogController instance
     if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
-      print("SDK not ready or server not configured to fetch OAuth providers.");
+      log.addLog("[AuthController] SDK not ready or server not configured to fetch OAuth providers.");
       oauthProviders.clear();
       return;
     }
@@ -227,10 +246,10 @@ class AuthController extends GetxController {
      };
 
     try {
-       print("Fetching OAuth providers from: $url");
+       log.addLog("[AuthController] Fetching OAuth providers from: $url");
        final response = await http.get(url, headers: headers).timeout(const Duration(seconds: 15));
 
-       print("OAuth providers response status: ${response.statusCode}");
+       log.addLog("[AuthController] OAuth providers response status: ${response.statusCode}");
        // print("OAuth providers response body: ${response.body}"); // Uncomment for debugging
 
        if (response.statusCode == 200) {
@@ -263,7 +282,7 @@ class AuthController extends GetxController {
              }).where((item) => item.isNotEmpty && (item['client_id']?.isNotEmpty ?? false)) // Filter out invalid/empty entries AND those without client_id
            );
             oauthProviders.assignAll(providers);
-            print("Loaded ${providers.length} OAuth providers.");
+            log.addLog("[AuthController] Loaded ${providers.length} OAuth providers.");
          } else {
            throw Exception("Unexpected response format for OAuth providers. Expected {'providers': [...]}. Got: ${response.body}");
          }
@@ -271,7 +290,7 @@ class AuthController extends GetxController {
           throw Exception("Failed to load OAuth providers: ${response.statusCode} ${response.reasonPhrase}");
        }
     } catch (e) {
-      print("Error fetching OAuth providers: $e");
+      log.addLog("[AuthController] Error fetching OAuth providers: $e");
       error.value = 'Failed to load OAuth providers: ${e.toString()}';
       oauthProviders.clear();
     } finally {
@@ -280,6 +299,7 @@ class AuthController extends GetxController {
   }
 
   Future<bool> loginWithOAuth(Map<String, dynamic> provider) async {
+    final log = Get.find<LogController>(); // Get LogController instance
     if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
       error.value = 'Server not configured.';
       return false;
@@ -341,10 +361,10 @@ class AuthController extends GetxController {
       };
       final body = jsonEncode(bodyMap);
       
-      print("[AuthController] Exchanging OAuth code with backend");
-      print("[AuthController] State JWT length: ${oauthResult.state.length}");
-      print("[AuthController] URL: $backendUrl");
-      print("[AuthController] Request body: $body");
+      log.addLog("[AuthController] Exchanging OAuth code with backend");
+      log.addLog("[AuthController] State JWT length: ${oauthResult.state.length}");
+      log.addLog("[AuthController] URL: $backendUrl");
+      log.addLog("[AuthController] Request body: $body");
       
       final response = await http.post(backendUrl, headers: headers, body: body)
           .timeout(const Duration(seconds: 45));
@@ -352,20 +372,20 @@ class AuthController extends GetxController {
       // Reset error state before processing response
       error.value = '';
 
-      print("Backend response status: ${response.statusCode}");
-      print("Backend response body: ${response.body}");
+      log.addLog("[AuthController] Backend response status: ${response.statusCode}");
+      log.addLog("[AuthController] Backend response body: ${response.body}");
       
       // Try to get more details from error response
       if (response.statusCode != 200) {
         try {
           final errorData = jsonDecode(response.body);
-          print("Detailed error: ${errorData['detail']}");
+          log.addLog("[AuthController] Detailed error: ${errorData['detail']}");
           // Check if there's more error context
           if (errorData['error'] != null) {
-            print("Error context: ${errorData['error']}");
+            log.addLog("[AuthController] Error context: ${errorData['error']}");
           }
         } catch (e) {
-          print("Could not parse error response: $e");
+          log.addLog("[AuthController] Could not parse error response: $e");
         }
       }
 
@@ -375,7 +395,7 @@ class AuthController extends GetxController {
 
         // Check if user was already logged in (linking account)
          if (token.value.isNotEmpty && responseData.containsKey('detail') && responseData['detail'].contains("connected successfully")) {
-           print("OAuth provider ${oauthResult.providerName} linked successfully.");
+           log.addLog("[AuthController] OAuth provider ${oauthResult.providerName} linked successfully.");
            error.value = 'Account linked successfully!';
            isLoading.value = false;
            return true;
@@ -419,7 +439,7 @@ class AuthController extends GetxController {
         throw Exception(errorMessage);
       }
     } catch (e) {
-      print("OAuth Error: $e");
+      log.addLog("[AuthController] OAuth Error: $e");
       error.value = e.toString();
       // Ensure token is cleared on OAuth failure if not linking
       if (!token.value.isEmpty) {

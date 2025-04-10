@@ -5,7 +5,7 @@ import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.os.Build
 import android.util.Log
-import com.example.demo_ai_even.bluetooth.BleManager
+// import com.example.demo_ai_even.bluetooth.BleManager // Removed old import
 
 @SuppressLint("MissingPermission")
 data class BleDevice(
@@ -18,6 +18,8 @@ data class BleDevice(
 ) {
 
     companion object {
+        private const val LOG_TAG = "BleDeviceModel" // Add local log tag
+
         fun createByDevice(
             name: String,
             address: String,
@@ -31,7 +33,7 @@ data class BleDevice(
 
     fun sendData(data: ByteArray): Boolean {
         if (gatt == null || writeCharacteristic == null) {
-            Log.e(BleManager.LOG_TAG, "$name: Gatt or WriteCharacteristic is null")
+            Log.e(LOG_TAG, "$name: Gatt or WriteCharacteristic is null")
             return false
         }
         return try {
@@ -42,7 +44,7 @@ data class BleDevice(
                 gatt!!.writeCharacteristic(writeCharacteristic)
             }
         } catch (e: Exception) {
-            Log.e(BleManager.LOG_TAG, "$name: send $data error = $e")
+            Log.e(LOG_TAG, "$name: send $data error = $e")
             false
         }
     }

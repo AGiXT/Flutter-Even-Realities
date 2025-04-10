@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'package:agixt_even_realities/ble_manager.dart';
+// import 'package:agixt_even_realities/ble_manager.dart'; // Removed old import
 import 'package:agixt_even_realities/controllers/evenai_model_controller.dart';
 import 'package:agixtsdk/agixtsdk.dart'; // Import AGiXTSDK from package
 import 'package:agixt_even_realities/controllers/server_config_controller.dart'; // Import ServerConfigController
@@ -80,7 +80,8 @@ class EvenAI {
   // receiving starting Even AI request from ble
   void toStartEvenAIByOS() async {
     // restart to avoid ble data conflict
-    BleManager.get().startSendBeatHeart();
+    // TODO: Re-implement heartbeat logic using BluetoothService if needed
+    // BleManager.get().startSendBeatHeart();
 
     startListening(); 
     
@@ -98,7 +99,8 @@ class EvenAI {
     isRunning = true;
     _currentLine = 0;
 
-    await BleManager.invokeMethod("startEvenAI");
+    // TODO: Replace with BluetoothService equivalent if needed
+    // await BleManager.invokeMethod("startEvenAI");
     
     await openEvenAIMic();
 
@@ -133,7 +135,8 @@ class EvenAI {
     _recordingTimer?.cancel();
     _recordingTimer = null;
 
-    await BleManager.invokeMethod("stopEvenAI");
+    // TODO: Replace with BluetoothService equivalent if needed
+    // await BleManager.invokeMethod("stopEvenAI");
     await Future.delayed(Duration(seconds: 2)); // todo
 
     print("recordOverByOS----startSendReply---pre------combinedText-------*$combinedText*---");
@@ -421,7 +424,8 @@ class EvenAI {
     isRunning = false;
     clear();
 
-    await BleManager.invokeMethod("stopEvenAI");
+    // TODO: Replace with BluetoothService equivalent if needed
+    // await BleManager.invokeMethod("stopEvenAI");
   }
 
   void clear() {

@@ -1,5 +1,5 @@
 import 'dart:typed_data';
-import 'package:agixt_even_realities/ble_manager.dart';
+// import 'package:agixt_even_realities/ble_manager.dart'; // Removed old import
 import 'package:agixt_even_realities/controllers/bmp_update_manager.dart';
 import 'package:agixt_even_realities/services/proto.dart';
 import 'package:agixt_even_realities/utils/utils.dart';
@@ -11,7 +11,8 @@ class FeaturesServices {
     int initialSeq = 0;
     bool isSuccess = await Proto.sendHeartBeat();
     print("${DateTime.now()} testBMP -------startSendBeatHeart----isSuccess---$isSuccess------");
-    BleManager.get().startSendBeatHeart();
+    // TODO: Re-implement heartbeat logic using BluetoothService if needed
+    // BleManager.get().startSendBeatHeart();
 
     final results = await Future.wait([
       bmpUpdateManager.updateBmp("L", bmpData, seq: initialSeq),
