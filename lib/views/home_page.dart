@@ -78,23 +78,35 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 10),
           // TODO: Update this section based on BluetoothService connection state
-          Obx(() => bluetoothService.isConnected.value // Use Obx for reactivity
+          Obx(() => (bluetoothService.isLeftConnected.value || bluetoothService.isRightConnected.value) // Use Obx for reactivity
               ? Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       ElevatedButton(
                         onPressed: () {
-                          // TODO: Logic to interact with connected device
-                          logController.addLog('[HomePage] Left Device interaction TBD');
+                            if (bluetoothService.isLeftConnected.value) {
+                                // TODO: Logic to interact with connected device
+                                logController.addLog('[HomePage] Left Device interaction TBD');
+                            } else {
+                                // Trigger scan or show device list for selection
+                                logController.addLog('[HomePage] Loading devices for Left connection');
+                                _startScan();
+                            }
                         },
-                        child: Text('Left Device', style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                        child: Text('Left Device', style: TextStyle(color: bluetoothService.isLeftConnected.value ? Theme.of(context).textTheme.bodyLarge?.color : Colors.grey)),
                       ),
                       ElevatedButton(
                         onPressed: () {
-                           // TODO: Logic to interact with connected device
-                          logController.addLog('[HomePage] Right Device interaction TBD');
+                            if (bluetoothService.isRightConnected.value) {
+                                // TODO: Logic to interact with connected device
+                                logController.addLog('[HomePage] Right Device interaction TBD');
+                            } else {
+                                // Trigger scan or show device list for selection
+                                logController.addLog('[HomePage] Loading devices for Right connection');
+                                _startScan();
+                            }
                         },
-                        child: Text('Right Device', style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color)),
+                        child: Text('Right Device', style: TextStyle(color: bluetoothService.isRightConnected.value ? Theme.of(context).textTheme.bodyLarge?.color : Colors.grey)),
                       ),
                     ],
                   )
@@ -130,14 +142,75 @@ class _HomePageState extends State<HomePage> {
                        discovered.id, // Show device ID
                        style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color),
                      ),
-                     trailing: ElevatedButton( // Add connect button
-                       child: const Text('Connect'),
-                       onPressed: () {
-                         bluetoothService.connectToDevice(discovered);
-                       },
+                     trailing: Row(
+                       mainAxisSize: MainAxisSize.min,
+                       children: [
+                         ElevatedButton(
+                           child: Text(bluetoothService.isLeftConnected.value && bluetoothService.leftDevice.value?.remoteId == discovered.device.remoteId
+                               ? 'Connected (Left)'
+                               : 'Left'),
+                           onPressed: () {
+                             if (!(bluetoothService.isLeftConnected.value && bluetoothService.leftDevice.value?.remoteId == discovered.device.remoteId)) {
+                               bluetoothService.connectToDevice(discovered, isLeft: true);
+                             }
+                           },
+                           style: ElevatedButton.styleFrom(
+                             backgroundColor: bluetoothService.isLeftConnected.value && bluetoothService.leftDevice.value?.remoteId == discovered.device.remoteId
+                                 ? Colors.green
+                                 : null,
+                           ),
+                         ),
+                         const SizedBox(width: 8),
+                         ElevatedButton(
+                           child: Text(bluetoothService.isRightConnected.value && bluetoothService.rightDevice.value?.remoteId == discovered.device.remoteId
+                               ? 'Connected (Right)'
+                               : 'Right'),
+                           onPressed: () {
+                             if (!(bluetoothService.isRightConnected.value && bluetoothService.rightDevice.value?.remoteId == discovered.device.remoteId)) {
+                               bluetoothService.connectToDevice(discovered, isLeft: false);
+                             }
+                           },
+                           style: ElevatedButton.styleFrom(
+                             backgroundColor: bluetoothService.isRightConnected.value && bluetoothService.rightDevice.value?.remoteId == discovered.device.remoteId
+                                 ? Colors.green
+                                 : null,
+                           ),
+                         ),
+                       ],
                      ),
                      onTap: () { // Keep onTap for potential future use or remove
-                        bluetoothService.connectToDevice(discovered);
+                       // Prompt user to choose side
+                       showDialog(
+                         context: context,
+                         builder: (context) => AlertDialog(
+                           title: Text('Connect ${discovered.name}'),
+                           content: const Text('Which side should this device be connected to?'),
+                           actions: [
+                             TextButton(
+                               onPressed: () {
+                                 if (!(bluetoothService.isLeftConnected.value && bluetoothService.leftDevice.value?.remoteId == discovered.device.remoteId)) {
+                                   bluetoothService.connectToDevice(discovered, isLeft: true);
+                                   Navigator.pop(context);
+                                 }
+                               },
+                               child: Text(bluetoothService.isLeftConnected.value && bluetoothService.leftDevice.value?.remoteId == discovered.device.remoteId
+                                   ? 'Connected (Left)'
+                                   : 'Left'),
+                             ),
+                             TextButton(
+                               onPressed: () {
+                                 if (!(bluetoothService.isRightConnected.value && bluetoothService.rightDevice.value?.remoteId == discovered.device.remoteId)) {
+                                   bluetoothService.connectToDevice(discovered, isLeft: false);
+                                   Navigator.pop(context);
+                                 }
+                               },
+                               child: Text(bluetoothService.isRightConnected.value && bluetoothService.rightDevice.value?.remoteId == discovered.device.remoteId
+                                   ? 'Connected (Right)'
+                                   : 'Right'),
+                             ),
+                           ],
+                         ),
+                       );
                      },
                   );
                 },
@@ -257,7 +330,7 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     // Log state during build
-    logController.addLog("[HomePage Build] isConnected: ${bluetoothService.isConnected.value}, Status: ${bluetoothService.connectionStatus.value}, Devices: ${bluetoothService.discoveredDevices.length}");
+    logController.addLog("[HomePage Build] Left Connected: ${bluetoothService.isLeftConnected.value}, Right Connected: ${bluetoothService.isRightConnected.value}, Left Status: ${bluetoothService.leftConnectionStatus.value}, Right Status: ${bluetoothService.rightConnectionStatus.value}, Devices: ${bluetoothService.discoveredDevices.length}");
     
     return Scaffold( // Ensure Scaffold is returned directly
         appBar: AppBar(
@@ -298,8 +371,8 @@ class _HomePageState extends State<HomePage> {
             children: [
               GestureDetector(
                 onTap: () async {
-                  // Trigger scan only if not connected
-                  if (!bluetoothService.isConnected.value) {
+                  // Trigger scan only if not fully connected
+                  if (!bluetoothService.isLeftConnected.value || !bluetoothService.isRightConnected.value) {
                     _startScan();
                   }
                 },
@@ -318,21 +391,21 @@ class _HomePageState extends State<HomePage> {
                     ],
                   ),
                   alignment: Alignment.center,
-                  // Display reactive connection status
-                  child: Obx(() => Text(bluetoothService.connectionStatus.value,
+                  // Display reactive connection status for both sides
+                  child: Obx(() => Text(
+                    '${bluetoothService.leftConnectionStatus.value}\n${bluetoothService.rightConnectionStatus.value}',
                       style: TextStyle(fontSize: 16, /* color: Theme.of(context).textTheme.bodyLarge?.color */))), // Added missing ')' for Text widget
                 ),
               ),
               const SizedBox(height: 16),
-              // Show device list only when not connected
-              Obx(() => bluetoothService.isConnected.value
-                  ? const SizedBox.shrink() // Hide list when connected
+              // Show device list if not fully connected
+              Obx(() => (bluetoothService.isLeftConnected.value && bluetoothService.isRightConnected.value)
+                  ? const SizedBox.shrink() // Hide list when both connected
                   : bleDevicePicker()),
-              // Show AI history section only when connected
-              Obx(() => bluetoothService.isConnected.value
+              // Show AI history section only when at least one side is connected
+              Obx(() => (bluetoothService.isLeftConnected.value || bluetoothService.isRightConnected.value)
                   ? Column( // This section shows when connected
                   children: [
-                    bleDevicePicker(),
                     Expanded(
                       child: GestureDetector(
                         onTap: () async {
@@ -365,7 +438,7 @@ class _HomePageState extends State<HomePage> {
                                         snapshot.data ?? "Loading...",
                                         style: TextStyle(
                                             fontSize: 14,
-                                            color: bluetoothService.isConnected.value // Use reactive state
+                                            color: (bluetoothService.isLeftConnected.value || bluetoothService.isRightConnected.value) // Use reactive state
                                                ? Theme.of(context).textTheme.bodyLarge?.color
                                                : Colors.grey.withOpacity(0.5)),
                                         textAlign: TextAlign.center,

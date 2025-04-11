@@ -5,13 +5,14 @@ import 'dart:typed_data';
 import 'package:agixt_even_realities/services/evenai_proto.dart';
 import 'package:agixt_even_realities/utils/utils.dart';
 import 'ble.dart'; // Import BleReceive definition
+import 'package:get/get.dart';
+import 'bluetooth_service.dart'; // Import BluetoothService
 
 class Proto {
   static String lR() {
-    // todo
-    // TODO: Re-implement connection check using BluetoothService
-    // if (BleManager.isBothConnected()) return "R";
-    //if (BleManager.isConnectedR()) return "R";
+    final BluetoothService bluetoothService = Get.find<BluetoothService>();
+    if (bluetoothService.isLeftConnected.value && bluetoothService.isRightConnected.value) return "R";
+    if (bluetoothService.isRightConnected.value) return "R";
     return "L";
   }
 
@@ -21,10 +22,23 @@ class Proto {
   }) async {
     var begin = Utils.getTimestampMs();
     var data = Uint8List.fromList([0x0E, 0x01]);
-    // TODO: Re-implement request logic using BluetoothService characteristic writes/reads
-    // var receive = await BleManager.request(data, lr: lr);
-    var receive = BleReceive(); // Placeholder
-    receive.isTimeout = true; // Assume timeout for now
+    final BluetoothService bluetoothService = Get.find<BluetoothService>();
+    var receive = BleReceive();
+    receive.isTimeout = true;
+    String targetSide = lr ?? lR();
+    try {
+      if (targetSide == "R" && bluetoothService.isRightConnected.value) {
+        // TODO: Implement actual Bluetooth write and read logic for right device
+        // Placeholder for now
+        receive.isTimeout = true;
+      } else if (targetSide == "L" && bluetoothService.isLeftConnected.value) {
+        // TODO: Implement actual Bluetooth write and read logic for left device
+        receive.isTimeout = true;
+      }
+    } catch (e) {
+      print("Error in micOn: $e");
+      receive.isTimeout = true;
+    }
 
     var end = Utils.getTimestampMs();
     var startMic = (begin + ((end - begin) ~/ 2));
@@ -57,10 +71,18 @@ class Proto {
     print(
         '${DateTime.now()} proto--sendEvenAIData---text---$text---_evenaiSeq----$_evenaiSeq---newScreen---$newScreen---pos---$pos---current_page_num--$current_page_num---max_page_num--$max_page_num--dataList----$dataList---');
 
-    // TODO: Re-implement requestList logic using BluetoothService
-    // bool isSuccess = await BleManager.requestList(dataList,
-    //     lr: "L", timeoutMs: timeoutMs ?? 2000);
-    bool isSuccess = false; // Placeholder
+    final BluetoothService bluetoothService = Get.find<BluetoothService>();
+    bool isSuccess = false;
+    try {
+      if (bluetoothService.isLeftConnected.value) {
+        // TODO: Implement actual Bluetooth write logic for left device
+        // Placeholder for now
+        isSuccess = false;
+      }
+    } catch (e) {
+      print("Error sending data to Left: $e");
+      isSuccess = false;
+    }
 
     print(
         '${DateTime.now()} sendEvenAIData-----isSuccess-----$isSuccess-------');
@@ -68,13 +90,14 @@ class Proto {
       print("${DateTime.now()} sendEvenAIData failed  L ");
       return false;
     } else {
-      // TODO: Re-implement requestList logic using BluetoothService
-      // isSuccess = await BleManager.requestList(dataList,
-      //     lr: "R", timeoutMs: timeoutMs ?? 2000);
-      isSuccess = false; // Placeholder
+      if (bluetoothService.isRightConnected.value) {
+        // TODO: Implement actual Bluetooth write logic for right device
+        // Placeholder for now
+        isSuccess = false;
+      }
 
       if (!isSuccess) {
-        print("${DateTime.now()} sendEvenAIData failed  R ");
+        print("${DateTime.now()} sendEvenAIData failed R ");
         return false;
       }
       return true;
@@ -95,10 +118,18 @@ class Proto {
     _beatHeartSeq++;
 
     print('${DateTime.now()} sendHeartBeat--------data---$data--');
-    // TODO: Re-implement request logic using BluetoothService
-    // var ret = await BleManager.request(data, lr: "L", timeoutMs: 1500);
-    var ret = BleReceive(); // Placeholder
-    ret.isTimeout = true; // Assume timeout
+    final BluetoothService bluetoothService = Get.find<BluetoothService>();
+    var ret = BleReceive();
+    ret.isTimeout = true;
+    try {
+      if (bluetoothService.isLeftConnected.value) {
+        // TODO: Implement actual Bluetooth write and read logic for left device
+        ret.isTimeout = true;
+      }
+    } catch (e) {
+      print("Error sending heartbeat to Left: $e");
+      ret.isTimeout = true;
+    }
 
     print('${DateTime.now()} sendHeartBeat----L----ret---${ret.data}--');
     if (ret.isTimeout) {
@@ -107,10 +138,17 @@ class Proto {
     } else if (ret.data[0].toInt() == 0x25 &&
         ret.data.length > 5 &&
         ret.data[4].toInt() == 0x04) {
-      // TODO: Re-implement request logic using BluetoothService
-      // var retR = await BleManager.request(data, lr: "R", timeoutMs: 1500);
-      var retR = BleReceive(); // Placeholder
-      retR.isTimeout = true; // Assume timeout
+      var retR = BleReceive();
+      retR.isTimeout = true;
+      try {
+        if (bluetoothService.isRightConnected.value) {
+          // TODO: Implement actual Bluetooth write and read logic for right device
+          retR.isTimeout = true;
+        }
+      } catch (e) {
+        print("Error sending heartbeat to Right: $e");
+        retR.isTimeout = true;
+      }
       print('${DateTime.now()} sendHeartBeat----R----retR---${retR.data}--');
       if (retR.isTimeout) {
         return false;
@@ -128,11 +166,22 @@ class Proto {
 
   static Future<String> getLegSn(String lr) async {
     var cmd = Uint8List.fromList([0x34]);
-    // TODO: Re-implement request logic using BluetoothService
-    // var resp = await BleManager.request(cmd, lr: lr);
-    var resp = BleReceive(); // Placeholder
-    resp.isTimeout = true; // Assume timeout
-    var sn = String.fromCharCodes(resp.data.sublist(2, 18).toList());
+    final BluetoothService bluetoothService = Get.find<BluetoothService>();
+    var resp = BleReceive();
+    resp.isTimeout = true;
+    try {
+      if (lr == "R" && bluetoothService.isRightConnected.value) {
+        // TODO: Implement actual Bluetooth write and read logic for right device
+        resp.isTimeout = true;
+      } else if (lr == "L" && bluetoothService.isLeftConnected.value) {
+        // TODO: Implement actual Bluetooth write and read logic for left device
+        resp.isTimeout = true;
+      }
+    } catch (e) {
+      print("Error getting LegSn: $e");
+      resp.isTimeout = true;
+    }
+    var sn = resp.data.length > 18 ? String.fromCharCodes(resp.data.sublist(2, 18).toList()) : "";
     return sn;
   }
 
@@ -141,18 +190,33 @@ class Proto {
     print("send exit all func");
     var data = Uint8List.fromList([0x18]);
 
-    // TODO: Re-implement request logic using BluetoothService
-    // var retL = await BleManager.request(data, lr: "L", timeoutMs: 1500);
-    var retL = BleReceive(); // Placeholder
-    retL.isTimeout = true; // Assume timeout
+    final BluetoothService bluetoothService = Get.find<BluetoothService>();
+    var retL = BleReceive();
+    retL.isTimeout = true;
+    try {
+      if (bluetoothService.isLeftConnected.value) {
+        // TODO: Implement actual Bluetooth write and read logic for left device
+        retL.isTimeout = true;
+      }
+    } catch (e) {
+      print("Error sending exit to Left: $e");
+      retL.isTimeout = true;
+    }
     print('${DateTime.now()} exit----L----ret---${retL.data}--');
     if (retL.isTimeout) {
       return false;
-    } else if (retL.data.isNotEmpty && retL.data[1].toInt() == 0xc9) {
-      // TODO: Re-implement request logic using BluetoothService
-      // var retR = await BleManager.request(data, lr: "R", timeoutMs: 1500);
-      var retR = BleReceive(); // Placeholder
-      retR.isTimeout = true; // Assume timeout
+    } else if (retL.data.isNotEmpty && retL.data.length > 1 && retL.data[1].toInt() == 0xc9) {
+      var retR = BleReceive();
+      retR.isTimeout = true;
+      try {
+        if (bluetoothService.isRightConnected.value) {
+          // TODO: Implement actual Bluetooth write and read logic for right device
+          retR.isTimeout = true;
+        }
+      } catch (e) {
+        print("Error sending exit to Right: $e");
+        retR.isTimeout = true;
+      }
       print('${DateTime.now()} exit----R----retR---${retR.data}--');
       if (retR.isTimeout) {
         return false;
@@ -195,9 +259,15 @@ class Proto {
     print(
         "proto -> sendNewAppWhiteListJson: length = ${dataList.length}, dataList = $dataList");
     for (var i = 0; i < 3; i++) {
-      // TODO: Re-implement requestList logic using BluetoothService
-      // final isSuccess = await BleManager.requestList(dataList, timeoutMs: 300, lr: "L");
-      final isSuccess = false; // Placeholder
+      final BluetoothService bluetoothService = Get.find<BluetoothService>();
+      final isSuccess = false;
+      try {
+        if (bluetoothService.isLeftConnected.value) {
+          // TODO: Implement actual Bluetooth write logic for left device
+        }
+      } catch (e) {
+        print("Error sending whitelist to Left: $e");
+      }
       if (isSuccess) {
         return;
       }
@@ -217,9 +287,15 @@ class Proto {
     print(
         "proto -> sendNotify: notifyId = $notifyId, data length = ${dataList.length} , data = $dataList, app = $notifyJson");
     for (var i = 0; i < retry; i++) {
-      // TODO: Re-implement requestList logic using BluetoothService
-      // final isSuccess = await BleManager.requestList(dataList, timeoutMs: 1000, lr: "L");
-      final isSuccess = false; // Placeholder
+      final BluetoothService bluetoothService = Get.find<BluetoothService>();
+      final isSuccess = false;
+      try {
+        if (bluetoothService.isLeftConnected.value) {
+          // TODO: Implement actual Bluetooth write logic for left device
+        }
+      } catch (e) {
+        print("Error sending notify to Left: $e");
+      }
       if (isSuccess) {
         return;
       }

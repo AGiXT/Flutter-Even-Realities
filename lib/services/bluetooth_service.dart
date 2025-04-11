@@ -24,9 +24,12 @@ class BluetoothService extends GetxService {
   StreamSubscription<BluetoothConnectionState>? _connectionStateSubscription;
 
   // --- Connection State ---
-  final Rx<BluetoothDevice?> connectedDevice = Rx<BluetoothDevice?>(null);
-  final RxBool isConnected = false.obs;
-  final RxString connectionStatus = 'Not Connected'.obs;
+  final Rx<BluetoothDevice?> leftDevice = Rx<BluetoothDevice?>(null);
+  final Rx<BluetoothDevice?> rightDevice = Rx<BluetoothDevice?>(null);
+  final RxBool isLeftConnected = false.obs;
+  final RxBool isRightConnected = false.obs;
+  final RxString leftConnectionStatus = 'Left: Not Connected'.obs;
+  final RxString rightConnectionStatus = 'Right: Not Connected'.obs;
   // --- End Connection State ---
 
   // TODO: Add methods for connecting, disconnecting, reading/writing characteristics
@@ -163,39 +166,72 @@ Future<void> fetchSystemDevices() async {
   }
 
   // --- Connection Logic ---
-  Future<void> connectToDevice(DiscoveredDevice discovered) async {
-    _log.addLog("[BluetoothService] Attempting to connect to ${discovered.name} (${discovered.id})...");
-    if (isConnected.value && connectedDevice.value?.remoteId == discovered.device.remoteId) {
-      _log.addLog("[BluetoothService] Already connected to this device.");
+  Future<void> connectToDevice(DiscoveredDevice discovered, {required bool isLeft}) async {
+    _log.addLog("[BluetoothService] Attempting to connect to ${discovered.name} (${discovered.id}) as ${isLeft ? 'Left' : 'Right'}...");
+    if (isLeft && isLeftConnected.value && leftDevice.value?.remoteId == discovered.device.remoteId) {
+      _log.addLog("[BluetoothService] Already connected to this device as Left.");
+      return;
+    } else if (!isLeft && isRightConnected.value && rightDevice.value?.remoteId == discovered.device.remoteId) {
+      _log.addLog("[BluetoothService] Already connected to this device as Right.");
       return;
     }
 
-    // Disconnect from any previous device
-    await disconnectDevice();
+    // Disconnect from any previous device on the same side
+    if (isLeft) {
+      await disconnectDevice(isLeft: true);
+    } else {
+      await disconnectDevice(isLeft: false);
+    }
 
-    connectionStatus.value = 'Connecting to ${discovered.name}...';
+    if (isLeft) {
+      leftConnectionStatus.value = 'Connecting to ${discovered.name}...';
+    } else {
+      rightConnectionStatus.value = 'Connecting to ${discovered.name}...';
+    }
     _connectionStateSubscription = discovered.device.connectionState.listen((state) {
-      _log.addLog("[BluetoothService] Connection state for ${discovered.name}: $state");
+      _log.addLog("[BluetoothService] Connection state for ${discovered.name} (${isLeft ? 'Left' : 'Right'}): $state");
       switch (state) {
         case BluetoothConnectionState.connecting:
-          connectionStatus.value = 'Connecting to ${discovered.name}...';
-          isConnected.value = false;
+          if (isLeft) {
+            leftConnectionStatus.value = 'Connecting to ${discovered.name}...';
+            isLeftConnected.value = false;
+          } else {
+            rightConnectionStatus.value = 'Connecting to ${discovered.name}...';
+            isRightConnected.value = false;
+          }
           break;
         case BluetoothConnectionState.connected:
-          connectionStatus.value = 'Connected to ${discovered.name}';
-          isConnected.value = true;
-          connectedDevice.value = discovered.device;
+          if (isLeft) {
+            leftConnectionStatus.value = 'Connected to ${discovered.name}';
+            isLeftConnected.value = true;
+            leftDevice.value = discovered.device;
+          } else {
+            rightConnectionStatus.value = 'Connected to ${discovered.name}';
+            isRightConnected.value = true;
+            rightDevice.value = discovered.device;
+          }
           // TODO: Discover services after connection
           // _discoverServices(discovered.device);
           break;
         case BluetoothConnectionState.disconnecting:
-          connectionStatus.value = 'Disconnecting from ${discovered.name}...';
-          isConnected.value = false;
+          if (isLeft) {
+            leftConnectionStatus.value = 'Disconnecting from ${discovered.name}...';
+            isLeftConnected.value = false;
+          } else {
+            rightConnectionStatus.value = 'Disconnecting from ${discovered.name}...';
+            isRightConnected.value = false;
+          }
           break;
         case BluetoothConnectionState.disconnected:
-          connectionStatus.value = 'Not Connected';
-          isConnected.value = false;
-          connectedDevice.value = null;
+          if (isLeft) {
+            leftConnectionStatus.value = 'Left: Not Connected';
+            isLeftConnected.value = false;
+            leftDevice.value = null;
+          } else {
+            rightConnectionStatus.value = 'Right: Not Connected';
+            isRightConnected.value = false;
+            rightDevice.value = null;
+          }
           _connectionStateSubscription?.cancel(); // Clean up listener
           _connectionStateSubscription = null;
           break;
@@ -206,31 +242,54 @@ Future<void> fetchSystemDevices() async {
       await discovered.device.connect(autoConnect: false); // Connect
     } catch (e) {
       _log.addLog("[BluetoothService] Error connecting to ${discovered.name}: $e");
-      connectionStatus.value = 'Connection Failed';
+      if (isLeft) {
+        leftConnectionStatus.value = 'Left: Connection Failed';
+      } else {
+        rightConnectionStatus.value = 'Right: Connection Failed';
+      }
       _connectionStateSubscription?.cancel();
       _connectionStateSubscription = null;
     }
   }
 
-  Future<void> disconnectDevice() async {
-    if (connectedDevice.value != null) {
-       _log.addLog("[BluetoothService] Disconnecting from ${connectedDevice.value!.platformName}...");
+  Future<void> disconnectDevice({required bool isLeft}) async {
+    if (isLeft && leftDevice.value != null) {
+       _log.addLog("[BluetoothService] Disconnecting from Left: ${leftDevice.value!.platformName}...");
        try {
-          await connectedDevice.value!.disconnect();
+          await leftDevice.value!.disconnect();
           // State update handled by the connectionState listener
        } catch (e) {
-          _log.addLog("[BluetoothService] Error disconnecting: $e");
+          _log.addLog("[BluetoothService] Error disconnecting Left: $e");
           // Force state update if disconnect fails unexpectedly
-          connectionStatus.value = 'Disconnection Failed';
-          isConnected.value = false; // Assume disconnected on error
-          connectedDevice.value = null;
+          leftConnectionStatus.value = 'Left: Disconnection Failed';
+          isLeftConnected.value = false; // Assume disconnected on error
+          leftDevice.value = null;
+          _connectionStateSubscription?.cancel();
+          _connectionStateSubscription = null;
+       }
+    } else if (!isLeft && rightDevice.value != null) {
+       _log.addLog("[BluetoothService] Disconnecting from Right: ${rightDevice.value!.platformName}...");
+       try {
+          await rightDevice.value!.disconnect();
+          // State update handled by the connectionState listener
+       } catch (e) {
+          _log.addLog("[BluetoothService] Error disconnecting Right: $e");
+          // Force state update if disconnect fails unexpectedly
+          rightConnectionStatus.value = 'Right: Disconnection Failed';
+          isRightConnected.value = false; // Assume disconnected on error
+          rightDevice.value = null;
           _connectionStateSubscription?.cancel();
           _connectionStateSubscription = null;
        }
     } else {
        // Ensure state is clean if called when not connected
-       connectionStatus.value = 'Not Connected';
-       isConnected.value = false;
+       if (isLeft) {
+         leftConnectionStatus.value = 'Left: Not Connected';
+         isLeftConnected.value = false;
+       } else {
+         rightConnectionStatus.value = 'Right: Not Connected';
+         isRightConnected.value = false;
+       }
        _connectionStateSubscription?.cancel();
        _connectionStateSubscription = null;
     }
