@@ -1,7 +1,12 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:get/get.dart';
 import 'package:agixtsdk/agixtsdk.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http; // Import http package
 import 'server_config_controller.dart';
+import 'log_controller.dart'; // Import LogController
+import '../services/oauth_service.dart'; // Import OAuthService
 
 class AuthController extends GetxController {
   final Rx<AGiXTSDK?> sdk = Rx<AGiXTSDK?>(null);
@@ -9,18 +14,42 @@ class AuthController extends GetxController {
   final RxBool isLoading = false.obs;
   final RxString error = ''.obs;
   final RxString otpUri = ''.obs;
-  final RxString token = ''.obs;
+  final RxString token = ''.obs; // Holds the "Bearer <token>"
+  final RxList<Map<String, dynamic>> oauthProviders = <Map<String, dynamic>>[].obs;
+  final RxBool isProvidersLoading = false.obs;
 
   late final ServerConfigController _serverConfigController;
+  late final OAuthService _oauthService; // Add OAuthService instance
   SharedPreferences? _prefs;
-  static const String _tokenKey = 'auth_token';
+  static const String _tokenKey = 'auth_token'; // Key for storing the raw token
 
   @override
   void onInit() {
     super.onInit();
     _serverConfigController = Get.find<ServerConfigController>();
-    // Initialize empty SDK - will configure later if valid credentials exist
-    sdk.value = AGiXTSDK(baseUri: '', apiKey: '', verbose: false); // Empty credentials will be populated after login
+    _oauthService = OAuthService(baseUri: _serverConfigController.baseUri.value); // Initialize OAuthService
+
+    // Initialize empty SDK - will configure later
+    sdk.value = AGiXTSDK(baseUri: '', apiKey: '', verbose: false);
+
+    // Listen for server config changes to re-init SDK and fetch providers
+    _serverConfigController.baseUri.listen((newUri) {
+      if (newUri.isNotEmpty) {
+        sdk.value = AGiXTSDK(baseUri: newUri, apiKey: token.value, verbose: false);
+        fetchOAuthProviders(); // Fetch providers when URI changes
+        _oauthService.updateBaseUri(newUri); // Update OAuthService URI
+      } else {
+        sdk.value = AGiXTSDK(baseUri: '', apiKey: '', verbose: false);
+        oauthProviders.clear(); // Clear providers if URI is invalid
+      }
+    });
+     _serverConfigController.apiKey.listen((newApiKey) {
+       if (sdk.value != null && _serverConfigController.baseUri.value.isNotEmpty) {
+         sdk.value = AGiXTSDK(baseUri: _serverConfigController.baseUri.value, apiKey: newApiKey, verbose: false);
+       }
+     });
+
+
     _initializeController();
   }
 
@@ -30,20 +59,44 @@ class AuthController extends GetxController {
   }
 
   Future<void> _restoreSavedToken() async {
-    if (_prefs == null) return;
+    final log = Get.find<LogController>(); // Get LogController instance
+    log.addLog("[AuthController] Attempting to restore saved token..."); // Log start
+    if (_prefs == null) {
+       log.addLog("[AuthController] SharedPreferences not initialized. Cannot restore token.");
+       return;
+    }
     
-    final savedToken = _prefs!.getString(_tokenKey);
-    if (savedToken != null) {
-      final fullToken = "Bearer $savedToken";
-      token.value = fullToken;
-      _serverConfigController.updateWithToken(fullToken);
+    final savedRawToken = _prefs!.getString(_tokenKey); // Get raw token
+    // Log retrieved token status (avoid logging the actual token for security)
+    log.addLog("[AuthController] Retrieved raw token from prefs: ${savedRawToken == null ? 'null' : (savedRawToken.isEmpty ? 'empty' : 'present')}");
+    
+    if (savedRawToken != null && savedRawToken.isNotEmpty) {
+      log.addLog("[AuthController] Restoring token and setting logged in state."); // Log success
+      token.value = "Bearer $savedRawToken"; // Set the full token for SDK use
+      _serverConfigController.updateWithToken(savedRawToken); // Update server config with raw token
       isLoggedIn.value = true;
+      // Fetch providers only after confirming server config and token are potentially set
+      await fetchOAuthProviders();
+    } else {
+      log.addLog("[AuthController] No valid token found in SharedPreferences."); // Log failure
+      // If no token, still try fetching providers if server is configured
+      if (_serverConfigController.isConfigured.value) {
+        await fetchOAuthProviders();
+      }
     }
   }
 
-  Future<void> _saveToken(String token) async {
-    if (_prefs == null) return;
-    await _prefs!.setString(_tokenKey, token);
+  // Saves the raw token (without "Bearer ")
+  Future<void> _saveToken(String rawToken) async {
+    final log = Get.find<LogController>(); // Get LogController instance
+    // Log attempt status (avoid logging the actual token for security)
+    log.addLog("[AuthController] Attempting to save raw token: ${rawToken.isEmpty ? 'empty' : 'present'}");
+    if (_prefs == null) {
+      log.addLog("[AuthController] SharedPreferences not initialized. Cannot save token.");
+      return;
+    }
+    await _prefs!.setString(_tokenKey, rawToken);
+    log.addLog("[AuthController] Token save operation completed."); // Log completion
   }
 
   String? _extractTokenFromResponse(String responseUrl) {
@@ -109,10 +162,14 @@ class AuthController extends GetxController {
       isLoading.value = true;
       error.value = '';
 
-      final fullToken = "Bearer $tokenValue";
-      token.value = fullToken;
-      await _saveToken(fullToken);
-      _serverConfigController.updateWithToken(tokenValue);
+      // Assume tokenValue is the raw token
+      token.value = "Bearer $tokenValue"; // Set RxString with "Bearer " prefix
+      await _saveToken(tokenValue); // Save the raw token
+      _serverConfigController.updateWithToken(tokenValue); // Update server config with raw token
+      // Update SDK instance with the new token
+      if (sdk.value != null && _serverConfigController.baseUri.value.isNotEmpty) {
+         sdk.value = AGiXTSDK(baseUri: _serverConfigController.baseUri.value, apiKey: token.value, verbose: false);
+      }
       isLoggedIn.value = true;
       return true;
     } catch (e) {
@@ -162,6 +219,243 @@ class AuthController extends GetxController {
     if (_prefs != null) {
       await _prefs!.remove(_tokenKey);
     }
-    _serverConfigController.updateWithToken('');
+    _serverConfigController.updateWithToken(''); // Clear token in server config
+    if (sdk.value != null && _serverConfigController.baseUri.value.isNotEmpty) {
+       sdk.value = AGiXTSDK(baseUri: _serverConfigController.baseUri.value, apiKey: '', verbose: false); // Update SDK
+    }
+  }
+
+  // --- OAuth Methods ---
+
+  Future<void> fetchOAuthProviders() async {
+    final log = Get.find<LogController>(); // Get LogController instance
+    if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
+      log.addLog("[AuthController] SDK not ready or server not configured to fetch OAuth providers.");
+      oauthProviders.clear();
+      return;
+    }
+
+    isProvidersLoading.value = true;
+    error.value = '';
+    // Use http package directly as SDK method is unavailable
+    final url = Uri.parse('${_serverConfigController.baseUri.value}/v1/oauth');
+    final Map<String, String> headers = {
+       'Accept': 'application/json',
+       // Add Authorization header if needed, though this endpoint might be public
+       if (token.value.isNotEmpty) 'Authorization': token.value,
+     };
+
+    try {
+       log.addLog("[AuthController] Fetching OAuth providers from: $url");
+       final response = await http.get(url, headers: headers).timeout(const Duration(seconds: 15));
+
+       log.addLog("[AuthController] OAuth providers response status: ${response.statusCode}");
+       // print("OAuth providers response body: ${response.body}"); // Uncomment for debugging
+
+       if (response.statusCode == 200) {
+         final decodedBody = jsonDecode(response.body);
+
+         if (decodedBody is Map<String, dynamic> &&
+             decodedBody.containsKey('providers') &&
+             decodedBody['providers'] is List) {
+
+           final List<Map<String, dynamic>> providers = List<Map<String, dynamic>>.from(
+             decodedBody['providers'].map((item) {
+               if (item is Map<String, dynamic>) {
+                 // Ensure all expected fields are present
+                 // Always require PKCE for Google OAuth
+                 bool pkceRequired = item["pkce_required"] ?? false;
+                 if (item["name"]?.toLowerCase() == "google") {
+                   pkceRequired = true;
+                 }
+                 return {
+                   "name": item["name"] ?? "",
+                   "scopes": item["scopes"] ?? "",
+                   "authorize": item["authorize"] ?? "",
+                   "client_id": item["client_id"] ?? "",
+                   "pkce_required": pkceRequired,
+                 };
+               } else {
+                 print("Warning: Unexpected item type in OAuth providers list: $item");
+                 return <String, dynamic>{}; // Return empty map for invalid items
+               }
+             }).where((item) => item.isNotEmpty && (item['client_id']?.isNotEmpty ?? false)) // Filter out invalid/empty entries AND those without client_id
+           );
+            oauthProviders.assignAll(providers);
+            log.addLog("[AuthController] Loaded ${providers.length} OAuth providers.");
+         } else {
+           throw Exception("Unexpected response format for OAuth providers. Expected {'providers': [...]}. Got: ${response.body}");
+         }
+       } else {
+          throw Exception("Failed to load OAuth providers: ${response.statusCode} ${response.reasonPhrase}");
+       }
+    } catch (e) {
+      log.addLog("[AuthController] Error fetching OAuth providers: $e");
+      error.value = 'Failed to load OAuth providers: ${e.toString()}';
+      oauthProviders.clear();
+    } finally {
+      isProvidersLoading.value = false;
+    }
+  }
+
+  Future<bool> loginWithOAuth(Map<String, dynamic> provider) async {
+    final log = Get.find<LogController>(); // Get LogController instance
+    if (sdk.value == null || _serverConfigController.baseUri.value.isEmpty) {
+      error.value = 'Server not configured.';
+      return false;
+    }
+    
+    // Reset state before starting OAuth flow
+    error.value = '';
+    isLoading.value = true;
+
+    try {
+      // Validate provider configuration
+      if (provider.isEmpty) {
+        throw Exception('Invalid OAuth provider configuration.');
+      }
+      
+      final String providerName = provider['name'] ?? 'unknown';
+      final String authorizationUrl = provider['authorize'] ?? '';
+      final String clientId = provider['client_id'] ?? '';
+      final String scopes = provider['scopes'] ?? '';
+      final bool pkceRequired = provider['pkce_required'] ?? false;
+
+      if (authorizationUrl.isEmpty || clientId.isEmpty) {
+        throw Exception('Provider configuration is missing authorize URL or client ID.');
+      }
+
+      // Define additional parameters for Google OAuth
+      Map<String, String> additionalParams = {};
+      if (providerName.toLowerCase() == 'google') {
+        additionalParams['access_type'] = 'offline';
+        additionalParams['prompt'] = 'consent'; // Force consent screen to get refresh token
+      }
+
+      // Start OAuth flow
+      final OAuthResult oauthResult = await _oauthService.authenticate(
+        authorizationUrl: authorizationUrl,
+        clientId: clientId,
+        scopes: scopes,
+        providerName: providerName,
+        pkceRequired: pkceRequired,
+        additionalParams: additionalParams,
+      );
+
+      // Exchange code with backend
+      final backendUrl = Uri.parse('${_serverConfigController.baseUri.value}/v1/oauth2/${oauthResult.providerName}');
+      final Map<String, String> headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        // Include existing token if user is linking account, otherwise backend handles new login
+        if (token.value.isNotEmpty) 'Authorization': token.value,
+        'X-OAuth-Provider': oauthResult.providerName.toLowerCase(),
+      };
+
+      // Use the state and redirect_uri from the OAuthResult
+      final bodyMap = {
+        'code': oauthResult.code,
+        'state': oauthResult.state,
+        'redirect_uri': oauthResult.redirectUri, // Use redirectUri from the result
+        'referrer': oauthResult.redirectUri, // Send the actual redirect URI as the referrer
+      };
+      final body = jsonEncode(bodyMap);
+      
+      log.addLog("[AuthController] Exchanging OAuth code with backend");
+      log.addLog("[AuthController] State JWT length: ${oauthResult.state.length}");
+      log.addLog("[AuthController] URL: $backendUrl");
+      log.addLog("[AuthController] Request body: $body");
+      
+      final response = await http.post(backendUrl, headers: headers, body: body)
+          .timeout(const Duration(seconds: 45));
+
+      // Reset error state before processing response
+      error.value = '';
+
+      log.addLog("[AuthController] Backend response status: ${response.statusCode}");
+      log.addLog("[AuthController] Backend response body: ${response.body}");
+      
+      // Try to get more details from error response
+      if (response.statusCode != 200) {
+        try {
+          final errorData = jsonDecode(response.body);
+          log.addLog("[AuthController] Detailed error: ${errorData['detail']}");
+          // Check if there's more error context
+          if (errorData['error'] != null) {
+            log.addLog("[AuthController] Error context: ${errorData['error']}");
+          }
+        } catch (e) {
+          log.addLog("[AuthController] Could not parse error response: $e");
+        }
+      }
+
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final responseData = jsonDecode(response.body);
+
+        // Check if user was already logged in (linking account)
+         if (token.value.isNotEmpty && responseData.containsKey('detail') && responseData['detail'].contains("connected successfully")) {
+           log.addLog("[AuthController] OAuth provider ${oauthResult.providerName} linked successfully.");
+           error.value = 'Account linked successfully!';
+           isLoading.value = false;
+           return true;
+         }
+
+         // Clear existing token for new OAuth login
+         if (token.value.isNotEmpty) {
+           await logout();
+         }
+
+
+        // Handle new login or token refresh
+        String? extractedToken;
+        if (responseData.containsKey('token') && responseData['token'] != null) {
+          extractedToken = responseData['token'];
+           // Check if the token includes "Bearer " prefix from backend
+           if (extractedToken!.startsWith('Bearer ')) {
+             extractedToken = extractedToken.substring(7);
+           }
+        } else if (responseData.containsKey('detail') && responseData['detail'] != null) {
+          // Try extracting from magic link in 'detail'
+          extractedToken = _extractTokenFromResponse(responseData['detail']);
+        }
+
+
+        if (extractedToken != null && extractedToken.isNotEmpty) {
+          return await loginWithToken(extractedToken); // Use existing token login flow
+        } else {
+          throw Exception('Token not found in backend response.');
+        }
+      } else {
+        // Handle backend error
+        String errorMessage = 'Failed to exchange OAuth code with backend.';
+        try {
+          final errorData = jsonDecode(response.body);
+          errorMessage = errorData['detail'] ?? errorMessage;
+        } catch (_) {
+          // Ignore JSON decode error, use default message
+           errorMessage = "${response.statusCode}: ${response.reasonPhrase ?? 'Unknown backend error'}";
+        }
+        throw Exception(errorMessage);
+      }
+    } catch (e) {
+      log.addLog("[AuthController] OAuth Error: $e");
+      error.value = e.toString();
+      // Ensure token is cleared on OAuth failure if not linking
+      if (!token.value.isEmpty) {
+        await logout();
+      }
+      return false;
+    } finally {
+      isLoading.value = false;
+      // Clean up any dangling OAuth state
+      _oauthService.dispose();
+    }
+  }
+
+  @override
+  void onClose() {
+    _oauthService.dispose(); // Dispose the OAuth service and server
+    super.onClose();
   }
 }

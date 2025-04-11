@@ -38,7 +38,7 @@ class RegisterPage extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    color: Theme.of(context).textTheme.headlineSmall?.color, // Use theme color
                   ),
                 ),
                 SizedBox(height: 20),
@@ -52,7 +52,7 @@ class RegisterPage extends StatelessWidget {
                     labelStyle: TextStyle(color: Colors.grey[400]),
                   ),
                   keyboardType: TextInputType.emailAddress,
-                  style: TextStyle(color: Colors.white),
+                  style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color), // Use theme text color
                 ),
                 SizedBox(height: 20),
 
@@ -63,7 +63,7 @@ class RegisterPage extends StatelessWidget {
                     border: OutlineInputBorder(),
                     labelStyle: TextStyle(color: Colors.grey[400]),
                   ),
-                  style: TextStyle(color: Colors.white),
+                  style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color), // Use theme text color
                 ),
                 SizedBox(height: 20),
 
@@ -74,7 +74,7 @@ class RegisterPage extends StatelessWidget {
                     border: OutlineInputBorder(),
                     labelStyle: TextStyle(color: Colors.grey[400]),
                   ),
-                  style: TextStyle(color: Colors.white),
+                  style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color), // Use theme text color
                 ),
                 SizedBox(height: 30),
 
@@ -151,7 +151,7 @@ class RegisterPage extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: Colors.white,
+                  color: Theme.of(context).textTheme.titleLarge?.color, // Use theme color
                 ),
               ),
               SizedBox(height: 20),
@@ -170,7 +170,7 @@ class RegisterPage extends StatelessWidget {
                       Text(
                         'Scan this QR code with your authenticator app',
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey[400]),
+                        style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color), // Use theme text color
                       ),
                       SizedBox(height: 10),
                       OutlinedButton(

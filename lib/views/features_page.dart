@@ -34,11 +34,17 @@ class _FeaturesPageState extends State<FeaturesPage> {
                 child: Container(
                   height: 60,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Theme.of(context).cardColor, // Use theme card color
                     borderRadius: BorderRadius.circular(5),
                   ),
                   alignment: Alignment.center,
-                  child: const Text("BMP", style: TextStyle(fontSize: 16)),
+                  child: Text(
+                    "BMP",
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
+                    )
+                  ),
                 ),
               ),
               GestureDetector(
@@ -52,14 +58,17 @@ class _FeaturesPageState extends State<FeaturesPage> {
                 child: Container(
                   height: 60,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Theme.of(context).cardColor, // Use theme card color
                     borderRadius: BorderRadius.circular(5),
                   ),
                   alignment: Alignment.center,
                   margin: const EdgeInsets.only(top: 16),
-                  child: const Text(
+                  child: Text(
                     "Notification",
-                    style: TextStyle(fontSize: 16),
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
+                    ),
                   ),
                 ),
               ),
@@ -74,14 +83,17 @@ class _FeaturesPageState extends State<FeaturesPage> {
                 child: Container(
                   height: 60,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: Theme.of(context).cardColor, // Use theme card color
                     borderRadius: BorderRadius.circular(5),
                   ),
                   alignment: Alignment.center,
                   margin: const EdgeInsets.only(top: 16),
-                  child: const Text(
+                  child: Text(
                     "Text",
-                    style: TextStyle(fontSize: 16),
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Theme.of(context).textTheme.bodyLarge?.color // Use theme text color
+                    ),
                   ),
                 ),
               ),
